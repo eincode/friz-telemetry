@@ -3,12 +3,22 @@
     "name": "friz-telemetry",
     "slug": "friz-telemetry",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "landscape",
     "icon": "./assets/images/icon.png",
     "scheme": "friztelemetry",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.friz.friztelemetry",
+      "requireFullScreen": true,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "This app connects to your PlayStation console on the local network to receive live telemetry data from Gran Turismo 7.",
+        "NSBonjourServices": [
+          "_gt7telemetry._udp",
+          "_gt7telemetry._udp"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -17,13 +27,32 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.friz.friztelemetry",
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "ACCESS_WIFI_STATE"
+      ]
     },
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraGradleProperties": {
+              "org.gradle.java.home": "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home"
+            }
+          },
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",
@@ -32,11 +61,67 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/Barlow-Black.ttf",
+            "./assets/fonts/Barlow-BlackItalic.ttf",
+            "./assets/fonts/Barlow-Bold.ttf",
+            "./assets/fonts/Barlow-BoldItalic.ttf",
+            "./assets/fonts/Barlow-ExtraBold.ttf",
+            "./assets/fonts/Barlow-ExtraBoldItalic.ttf",
+            "./assets/fonts/Barlow-ExtraLight.ttf",
+            "./assets/fonts/Barlow-ExtraLightItalic.ttf",
+            "./assets/fonts/Barlow-Italic.ttf",
+            "./assets/fonts/Barlow-Light.ttf",
+            "./assets/fonts/Barlow-LightItalic.ttf",
+            "./assets/fonts/Barlow-Medium.ttf",
+            "./assets/fonts/Barlow-MediumItalic.ttf",
+            "./assets/fonts/Barlow-Regular.ttf",
+            "./assets/fonts/Barlow-SemiBold.ttf",
+            "./assets/fonts/Barlow-SemiBoldItalic.ttf",
+            "./assets/fonts/Barlow-Thin.ttf",
+            "./assets/fonts/Barlow-ThinItalic.ttf",
+            "./assets/fonts/IBMPlexMono-Bold.ttf",
+            "./assets/fonts/IBMPlexMono-BoldItalic.ttf",
+            "./assets/fonts/IBMPlexMono-ExtraLight.ttf",
+            "./assets/fonts/IBMPlexMono-ExtraLightItalic.ttf",
+            "./assets/fonts/IBMPlexMono-Italic.ttf",
+            "./assets/fonts/IBMPlexMono-Light.ttf",
+            "./assets/fonts/IBMPlexMono-LightItalic.ttf",
+            "./assets/fonts/IBMPlexMono-Medium.ttf",
+            "./assets/fonts/IBMPlexMono-MediumItalic.ttf",
+            "./assets/fonts/IBMPlexMono-Regular.ttf",
+            "./assets/fonts/IBMPlexMono-SemiBold.ttf",
+            "./assets/fonts/IBMPlexMono-SemiBoldItalic.ttf",
+            "./assets/fonts/IBMPlexMono-Thin.ttf",
+            "./assets/fonts/IBMPlexMono-ThinItalic.ttf",
+            "./assets/fonts/SairaCondensed-Black.ttf",
+            "./assets/fonts/SairaCondensed-Bold.ttf",
+            "./assets/fonts/SairaCondensed-ExtraBold.ttf",
+            "./assets/fonts/SairaCondensed-ExtraLight.ttf",
+            "./assets/fonts/SairaCondensed-Light.ttf",
+            "./assets/fonts/SairaCondensed-Medium.ttf",
+            "./assets/fonts/SairaCondensed-Regular.ttf",
+            "./assets/fonts/SairaCondensed-SemiBold.ttf",
+            "./assets/fonts/SairaCondensed-Thin.ttf"
+          ]
+        }
+      ],
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c0414d14-470a-4895-8f41-4af97d20939a"
+      }
     }
   }
 }

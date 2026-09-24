@@ -1,98 +1,69 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import { useEffect } from "react";
+import { Platform, StyleSheet, View, ViewStyle } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { Action } from "@/components/pages/Welcome/Action";
+import { Branding } from "@/components/pages/Welcome/Branding";
+import { AmbientGraph } from "@/components/ui/ambient-graph";
+import { TopBar } from "@/components/ui/top-bar";
+import { WebBadge } from "@/components/web-badge";
+import { Colors } from "@/constants/theme";
+import { useConsoleConnectionStore } from "@/store/consoleConnectionStore";
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+const queryClient = new QueryClient();
 
 export default function HomeScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const { status, connect, disconnect } = useConsoleConnectionStore((s) => s);
+  const pad: ViewStyle = {
+    paddingLeft: Math.max(30, insets.left),
+    paddingRight: Math.max(30, insets.right),
+  };
+
+  useEffect(() => {
+    if (status === "connected") {
+      router.push("/RaceDashboard");
+    }
+  }, [status, router]);
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <QueryClientProvider client={queryClient}>
+      <View style={styles.root}>
+        <TopBar style={pad} />
+        <View style={[styles.body, pad]}>
+          <AmbientGraph />
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+          <Branding />
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+          <Action
+            onStartTelemetry={() => {
+              if (status === "error") disconnect();
+              connect();
+            }}
+            onServerConnect={() => router.push("/ServerConnect")}
           />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+        </View>
+        {Platform.OS === "web" && <WebBadge />}
+      </View>
+    </QueryClientProvider>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
+    justifyContent: "center",
+    flexDirection: "row",
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    backgroundColor: Colors.background,
   },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+
+  root: { flex: 1, backgroundColor: Colors.background },
+
+  body: { flex: 1, flexDirection: "row" },
 });
