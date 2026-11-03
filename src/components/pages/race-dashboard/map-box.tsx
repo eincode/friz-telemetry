@@ -1,55 +1,500 @@
 import { Box } from "@/components/pages/race-dashboard/box";
+import { ThemedText } from "@/components/themed-text";
+import { PulseDot } from "@/components/ui/pulse-dot";
 import { Colors, HUE } from "@/constants/theme";
+import { useOverlayStore } from "@/store/overlayStore";
+import { useServerStore } from "@/store/serverStore";
+import { useTelemetryServerStore } from "@/store/telemetryServerStore";
+import { TrackMapSnapshot } from "@/utils/telemetry.ts/trackMap";
+import { TrackData } from "@/utils/telemetry.ts/trackMatch";
 import { Vec3 } from "@/utils/telemetry.ts/types";
-import { Image } from "expo-image";
-import { StyleSheet, View } from "react-native";
+import { useMemo, useState } from "react";
+import { LayoutChangeEvent, Pressable, StyleSheet, View } from "react-native";
+import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from "react-native-svg";
 
-const TRACK_MAP = require("@/assets/images/tracks/trial-mountain.png");
+/** Inset between the map and the box edges, in px. */
+const PADDING = 12;
+/** Wider inset in a multi-driver session, leaving room for the driver tags. */
+const SESSION_PADDING = 28;
+/**
+ * Upper bound on zoom, in px per metre. Early in the trace the bounds are
+ * tiny; without a cap the first few metres would fill the whole box.
+ */
+const MAX_SCALE = 1;
+const TRACK_EDGE = "#2A333C";
+const TRACK_SURFACE = "#5B6976";
+/** Known-track rendering: road fill, kerb lines, start/finish and sector marks. */
+const ROAD_FILL = "#3A4651";
+const ROAD_EDGE = "#7A8996";
+const START_FINISH = Colors.white;
+const SECTOR_MARK = Colors.warn;
+/** Narrowest the road is drawn, in px, so it stays visible on big tracks. */
+const MIN_ROAD_PX = 3;
+/** Start/finish and sector marks stick out this far past each edge, in px. */
+const MARK_OVERHANG_PX = 3;
+/** Shortest half-length of a start/finish or sector mark, in px. */
+const MIN_MARK_HALF_PX = 7;
+/** Car marker: an arrowhead pointing along +x, centred on the car position. */
+const CAR_ARROW = "M10 0 L-6 -7 L-2.5 0 L-6 7 Z";
 
 /**
- * Trial Mountain calibration — similarity transform from GT7 world coords to
- * normalized map-image coords, fitted over start/finish + sector 1/2 markers.
- * scale 0.60558 px/unit, rotation 0.133°, image 1174×481, max residual ≈ 2 px.
+ * Driver markers, after gt7-race-overlay's STTrackMap: each other car is a
+ * dot with a leader line out to a tag showing its place and a short name.
+ * Our own car keeps its arrow and gets a tag in the primary colour.
  */
-const CALIBRATION = {
-  scaleX: 0.0005158248,
-  shearXZ: -0.0000011974,
-  offsetX: 0.5068228279,
-  shearZX: 0.0000029225,
-  scaleZ: 0.0012589987,
-  offsetZ: 0.5109147609,
-};
+const LEADER_COLOR = Colors.warn;
+const OPPONENT_COLOR = "#ff3344";
+const TAG_BG = Colors.background;
+const TAG_INK = Colors.text;
+const TAG_INK_DIM = "rgba(242,245,248,0.4)";
+const LEADER_LINE = "rgba(242,245,248,0.55)";
+/** Dimming for a driver whose telemetry link is down. */
+const DISCONNECTED_OPACITY = 0.4;
+const DOT_R = 4.5;
+/** Room kept clear around our own arrow when placing tags. */
+const SELF_R = 9;
+const TAG_H = 15;
+const TAG_STRIP_W = 2;
+const TAG_PAD_X = 4;
+const TAG_GAP = 4;
+const TAG_RANK_SIZE = 8;
+const TAG_NAME_SIZE = 9;
+/** Glyph advance of IBM Plex Mono, as a fraction of the font size. */
+const MONO_ADVANCE = 0.6;
+/** Leader-line lengths tried for each tag, shortest first, in px. */
+const LEADER_LENGTHS = [14, 26, 40];
+/** Turns off the outward direction tried for each tag, in degrees. */
+const LEADER_TURNS = [0, 35, -35, 70, -70, 110, -110, 180];
 
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+interface Fit {
+  minX: number;
+  minZ: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
 
-export function MapBox({ carPosition }: { carPosition: Vec3 }) {
-  const left =
-    clamp01(
-      CALIBRATION.scaleX * carPosition.x +
-        CALIBRATION.shearXZ * carPosition.z +
-        CALIBRATION.offsetX,
-    ) * 100;
-  const top =
-    clamp01(
-      CALIBRATION.shearZX * carPosition.x +
-        CALIBRATION.scaleZ * carPosition.z +
-        CALIBRATION.offsetZ,
-    ) * 100;
+/** Fits the points' XZ bounds into the box, centred, keeping aspect ratio. */
+function computeFit(points: number[], w: number, h: number, padding: number): Fit | null {
+  if (points.length < 2 || w <= 0 || h <= 0) return null;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < points.length; i += 2) {
+    const x = points[i];
+    const z = points[i + 1];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  const innerW = Math.max(1, w - padding * 2);
+  const innerH = Math.max(1, h - padding * 2);
+  const spanX = Math.max(maxX - minX, 1e-3);
+  const spanZ = Math.max(maxZ - minZ, 1e-3);
+  const scale = Math.min(innerW / spanX, innerH / spanZ, MAX_SCALE);
+  return {
+    minX,
+    minZ,
+    scale,
+    offsetX: (w - spanX * scale) / 2,
+    offsetY: (h - spanZ * scale) / 2,
+  };
+}
+
+// World +X is screen right and world +Z is screen down, which matches the
+// in-game map orientation.
+const projectX = (f: Fit, x: number) => f.offsetX + (x - f.minX) * f.scale;
+const projectY = (f: Fit, z: number) => f.offsetY + (z - f.minZ) * f.scale;
+
+const pt = (f: Fit, x: number, z: number) => `${projectX(f, x).toFixed(1)} ${projectY(f, z).toFixed(1)}`;
+
+function buildPath(points: number[], f: Fit, closed: boolean): string {
+  let d = "";
+  for (let i = 0; i < points.length; i += 2) {
+    d += `${i === 0 ? "M" : "L"}${projectX(f, points[i]).toFixed(1)} ${projectY(f, points[i + 1]).toFixed(1)}`;
+  }
+  return closed ? `${d}Z` : d;
+}
+
+/**
+ * The road surface as one quad per centerline step, between matching left
+ * and right edge points. Drawn as separate subpaths with the same winding and
+ * filled nonzero, so crossovers (Suzuka's bridge) stay solid instead of
+ * cancelling out the way an even-odd ring between the two edges would.
+ */
+function buildRoad(t: TrackData, f: Fit): string {
+  const l = t.leftEdge;
+  const r = t.rightEdge;
+  const n = Math.min(l.length, r.length);
+  let d = "";
+  // No wrap-around quad: the recorded edges already end back on their first
+  // point, and joining last to first would add a flipped, zero-width quad.
+  for (let i = 0; i + 2 < n; i += 2) {
+    const j = i + 2;
+    d += `M${pt(f, l[i], l[i + 1])}L${pt(f, l[j], l[j + 1])}L${pt(f, r[j], r[j + 1])}L${pt(f, r[i], r[i + 1])}Z`;
+  }
+  return d;
+}
+
+/** A mark across the track from edge to edge, overhanging both sides a little. */
+function buildMark(f: Fit, [lx, lz]: [number, number], [rx, rz]: [number, number]): string {
+  const ax = projectX(f, lx);
+  const ay = projectY(f, lz);
+  const bx = projectX(f, rx);
+  const by = projectY(f, rz);
+  const len = Math.hypot(bx - ax, by - ay);
+  if (len === 0) return "";
+  const half = Math.max(len / 2 + MARK_OVERHANG_PX, MIN_MARK_HALF_PX);
+  const mx = (ax + bx) / 2;
+  const my = (ay + by) / 2;
+  const ux = ((bx - ax) / len) * half;
+  const uy = ((by - ay) / len) * half;
+  return `M${(mx - ux).toFixed(1)} ${(my - uy).toFixed(1)}L${(mx + ux).toFixed(1)} ${(my + uy).toFixed(1)}`;
+}
+
+function KnownTrack({ track, fit }: { track: TrackData; fit: Fit }) {
+  const paths = useMemo(() => {
+    const l = track.leftEdge;
+    const r = track.rightEdge;
+    return {
+      road: buildRoad(track, fit),
+      center: buildPath(track.centerline, fit, true),
+      left: buildPath(l, fit, true),
+      right: buildPath(r, fit, true),
+      start: buildMark(fit, [l[0], l[1]], [r[0], r[1]]),
+      sectors: track.sectors.map((s) => buildMark(fit, s.left, s.right)).join(""),
+    };
+  }, [track, fit]);
 
   return (
-    <Box hue="steering" label="TRIAL MOUNTAIN" style={styles.box}>
-      <View
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          alignItems: "center",
-          paddingHorizontal: 16,
-        }}
+    <>
+      <Path d={paths.road} fill={ROAD_FILL} stroke={ROAD_FILL} strokeWidth={0.75} strokeLinejoin="round" />
+      <Path d={paths.center} stroke={ROAD_FILL} strokeWidth={MIN_ROAD_PX} fill="none" strokeLinejoin="round" />
+      <Path d={paths.left} stroke={ROAD_EDGE} strokeWidth={1} fill="none" strokeLinejoin="round" />
+      <Path d={paths.right} stroke={ROAD_EDGE} strokeWidth={1} fill="none" strokeLinejoin="round" />
+      <Path d={paths.sectors} stroke={SECTOR_MARK} strokeWidth={2} strokeLinecap="round" />
+      <Path d={paths.start} stroke={START_FINISH} strokeWidth={2.5} strokeLinecap="round" />
+    </>
+  );
+}
+
+/** "M. VERSTAPPEN" → "VER"; falls back to the driver id when there is no name. */
+function shortName(name: string | null | undefined, id: number): string {
+  const words = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  const last = words[words.length - 1]?.replace(/[^\p{L}\p{N}]/gu, "");
+  return last ? last.slice(0, 3).toUpperCase() : `#${id}`;
+}
+
+interface Area {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const overlaps = (a: Area, b: Area) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/**
+ * Tag box at the end of a `len` px leader from (cx, cy) along (dx, dy). Mostly
+ * sideways leaders put the tag beside the end point, mostly vertical ones
+ * centre it above or below, so the tag always sits clear of its own car.
+ */
+function tagBox(cx: number, cy: number, dx: number, dy: number, len: number, w: number): Area {
+  const ax = cx + dx * len;
+  const ay = cy + dy * len;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return { x: dx >= 0 ? ax : ax - w, y: ay - TAG_H / 2, w, h: TAG_H };
+  }
+  return { x: ax - w / 2, y: dy >= 0 ? ay : ay - TAG_H, w, h: TAG_H };
+}
+
+/**
+ * Last chosen [length, turn] per driver; tried first so tags hold still.
+ * Module-level rather than a ref since placement runs during render; there
+ * is only ever one map on screen.
+ */
+const lastTagSpot = new Map<number, [number, number]>();
+
+interface Marker {
+  id: number;
+  rank: number;
+  self: boolean;
+  connected: boolean;
+  /** Screen position, px. */
+  x: number;
+  y: number;
+  label: string;
+}
+
+/**
+ * Every driver in the session from the server's overlay feed. Other cars get
+ * a dot; every car, ours included, gets a tag. Each tag tries directions
+ * fanning out from "away from the map centre" at a few lengths, and takes the
+ * first spot that stays inside the map without covering an earlier tag or any
+ * car. A tag keeps last tick's spot while it is still clear, so tags don't
+ * flicker. Subscribes to the feed itself so its ~15 Hz updates only redraw
+ * the markers, not the track.
+ */
+function DriverMarkers({
+  fit,
+  width,
+  height,
+  self,
+}: {
+  fit: Fit;
+  width: number;
+  height: number;
+  /** Our car's screen position from local telemetry; null when off track. */
+  self: { x: number; y: number } | null;
+}) {
+  const cars = useOverlayStore((s) => s.cars);
+  const standings = useOverlayStore((s) => s.standings);
+  const roster = useOverlayStore((s) => s.roster);
+  const selfId = useServerStore((s) => s.driverId);
+  const selfName = useServerStore((s) => s.driverName);
+  const names = useMemo(() => new Map(roster.map((r) => [r.id, r.name])), [roster]);
+
+  const positions = useMemo(() => new Map(cars.map((c) => [c.id, c.position])), [cars]);
+
+  // Places come from the once-a-second standings so tags agree with the
+  // leaderboard; positions are live. Walking the standings places the
+  // leader's tag first so it never moves. A driver who just joined shows up
+  // at the next standings refresh.
+  const markers: Marker[] = standings.flatMap((s) => {
+    const isSelf = s.id === selfId;
+    const p = positions.get(s.id);
+    // Our own car is drawn where local telemetry puts it: fresher than the server's copy.
+    const at = isSelf ? self : p && { x: projectX(fit, p[0]), y: projectY(fit, p[1]) };
+    if (!at) return [];
+    const name = isSelf ? (selfName ?? names.get(s.id)) : names.get(s.id);
+    return [{ id: s.id, rank: s.rank, self: isSelf, connected: s.connected, ...at, label: shortName(name, s.id) }];
+  });
+  if (markers.length === 0) return null;
+
+  const inside = (b: Area) => b.x >= 2 && b.y >= 2 && b.x + b.w <= width - 2 && b.y + b.h <= height - 2;
+  const clampArea = (b: Area): Area => ({
+    ...b,
+    x: Math.min(Math.max(b.x, 2), width - b.w - 2),
+    y: Math.min(Math.max(b.y, 2), height - b.h - 2),
+  });
+
+  const carRects: Area[] = markers.map((m) => {
+    const r = m.self ? SELF_R : DOT_R;
+    return { x: m.x - r, y: m.y - r, w: r * 2, h: r * 2 };
+  });
+  const placed: Area[] = [];
+  const tags = markers.map((m) => {
+    const out = Math.atan2(m.y - height / 2, m.x - width / 2);
+    const rankW = String(m.rank).length * TAG_RANK_SIZE * MONO_ADVANCE;
+    const nameW = m.label.length * TAG_NAME_SIZE * MONO_ADVANCE;
+    const w = TAG_STRIP_W + TAG_PAD_X + rankW + TAG_GAP + nameW + TAG_PAD_X;
+    const clashes = (b: Area) =>
+      placed.filter((p) => overlaps(p, b)).length + carRects.filter((d) => overlaps(d, b)).length;
+
+    const prev = lastTagSpot.get(m.id);
+    const spots: [number, number][] = [
+      ...(prev ? [prev] : []),
+      ...LEADER_LENGTHS.flatMap((len) => LEADER_TURNS.map((turn): [number, number] => [len, turn])),
+    ];
+
+    let box: Area | null = null;
+    let fallback: { box: Area; clashes: number } | null = null;
+    for (const [len, turn] of spots) {
+      const a = out + (turn * Math.PI) / 180;
+      const b = tagBox(m.x, m.y, Math.cos(a), Math.sin(a), len, w);
+      if (!inside(b)) continue;
+      const n = clashes(b);
+      if (n === 0) {
+        box = b;
+        lastTagSpot.set(m.id, [len, turn]);
+        break;
+      }
+      if (!fallback || n < fallback.clashes) fallback = { box: b, clashes: n };
+    }
+    // Nowhere clear: least-crowded in-bounds spot, else straight out and clamped.
+    box ??= fallback?.box ?? clampArea(tagBox(m.x, m.y, Math.cos(out), Math.sin(out), LEADER_LENGTHS[0], w));
+    placed.push(box);
+    // Leader line ends on the tag edge nearest the car.
+    const ex = Math.min(Math.max(m.x, box.x), box.x + box.w);
+    const ey = Math.min(Math.max(m.y, box.y), box.y + box.h);
+    const color = m.self ? Colors.primary : m.rank === 1 ? LEADER_COLOR : OPPONENT_COLOR;
+    return { ...m, box, ex, ey, rankW, color };
+  });
+
+  return (
+    <>
+      {/* Lines and tags first, dots last, so no tag ever hides a car. */}
+      {tags.map((t) => (
+        <G key={`tag-${t.id}`} opacity={t.connected ? 1 : DISCONNECTED_OPACITY}>
+          <Line x1={t.x} y1={t.y} x2={t.ex} y2={t.ey} stroke={LEADER_LINE} strokeWidth={1} />
+          <Rect x={t.box.x} y={t.box.y} width={t.box.w} height={t.box.h} fill={TAG_BG} />
+          <Rect x={t.box.x} y={t.box.y} width={TAG_STRIP_W} height={t.box.h} fill={t.color} />
+          <SvgText
+            x={t.box.x + TAG_STRIP_W + TAG_PAD_X}
+            y={t.box.y + t.box.h / 2 + TAG_RANK_SIZE * 0.35}
+            fontFamily="IBMPlexMono-Bold"
+            fontSize={TAG_RANK_SIZE}
+            fill={TAG_INK_DIM}
+          >
+            {t.rank}
+          </SvgText>
+          <SvgText
+            x={t.box.x + TAG_STRIP_W + TAG_PAD_X + t.rankW + TAG_GAP}
+            y={t.box.y + t.box.h / 2 + TAG_NAME_SIZE * 0.35}
+            fontFamily="IBMPlexMono-Bold"
+            fontSize={TAG_NAME_SIZE}
+            fill={t.self ? Colors.primary : TAG_INK}
+          >
+            {t.label}
+          </SvgText>
+        </G>
+      ))}
+      {tags
+        .filter((t) => !t.self)
+        .map((t) => (
+          <Circle
+            key={`dot-${t.id}`}
+            cx={t.x}
+            cy={t.y}
+            r={DOT_R}
+            fill={t.color}
+            stroke={TAG_INK}
+            strokeWidth={1.25}
+            opacity={t.connected ? 1 : DISCONNECTED_OPACITY}
+          />
+        ))}
+    </>
+  );
+}
+
+/**
+ * Small dot over the map's top-right corner showing the multi-driver server
+ * link: pulsing green while telemetry is going out, pulsing yellow while
+ * retrying after a drop, solid red while the socket is down. Hidden outside a
+ * multi-driver session, and while connected but not sending. Absolutely
+ * positioned so it never shifts the map or header.
+ */
+function ServerLinkIndicator() {
+  const inSession = useServerStore((s) => s.token !== null);
+  const sending = useTelemetryServerStore((s) => s.sending);
+  const status = useTelemetryServerStore((s) => s.status);
+  if (!inSession || (status === "connected" && !sending)) return null;
+  const state = sending
+    ? { color: Colors.success, label: "LIVE", pulse: true, a11y: "Sending telemetry to server" }
+    : status === "reconnecting"
+      ? { color: Colors.warn, label: "RECONNECTING", pulse: true, a11y: "Reconnecting to server" }
+      : { color: Colors.error, label: "OFFLINE", pulse: false, a11y: "Disconnected from server" };
+  return (
+    <View style={styles.link} pointerEvents="none" accessible accessibilityLabel={state.a11y}>
+      {state.pulse ? (
+        <PulseDot color={state.color} size={6} />
+      ) : (
+        <View style={[styles.linkDot, { backgroundColor: state.color }]} />
+      )}
+      <ThemedText type="data" style={[styles.linkLabel, { color: state.color }]}>
+        {state.label}
+      </ThemedText>
+    </View>
+  );
+}
+
+export function MapBox({
+  carPosition,
+  carHeading,
+  trackMap,
+  track,
+  onReset,
+}: {
+  carPosition: Vec3;
+  /** Facing direction in radians, 0 = world +X; see HeadingTracker. */
+  carHeading: number;
+  trackMap: TrackMapSnapshot;
+  /** Matched known track; when set it replaces the traced outline. */
+  track: TrackData | null;
+  onReset: () => void;
+}) {
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const onLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setSize({ w: width, h: height });
+  };
+
+  const { points, complete } = trackMap;
+  const inSession = useServerStore((s) => s.token !== null);
+  // A known track is fitted on its edges so the full road width is in view.
+  const fitPoints = useMemo(() => (track ? [...track.leftEdge, ...track.rightEdge] : points), [track, points]);
+  const padding = inSession ? SESSION_PADDING : PADDING;
+  const fit = useMemo(() => computeFit(fitPoints, size.w, size.h, padding), [fitPoints, size.w, size.h, padding]);
+  // All-zero position is what GT7 sends outside of a session.
+  const onTrack = !(carPosition.x === 0 && carPosition.y === 0 && carPosition.z === 0);
+  const self = fit && onTrack ? { x: projectX(fit, carPosition.x), y: projectY(fit, carPosition.z) } : null;
+  const path = useMemo(() => (fit ? buildPath(points, fit, complete) : ""), [points, fit, complete]);
+
+  const header = (
+    <View style={styles.header}>
+      {track ? null : (
+        <ThemedText type="data" style={complete ? styles.statusDim : styles.status}>
+          {complete ? "UNKNOWN TRACK" : points.length ? "MAPPING…" : "WAITING"}
+        </ThemedText>
+      )}
+      <Pressable
+        onPress={onReset}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Reset session"
+        style={({ pressed }) => [styles.reset, pressed && styles.resetPressed]}
       >
-        <View style={styles.mapWrap}>
-          <Image source={TRACK_MAP} style={styles.map} />
-          <View style={[styles.carDot, { left: `${left}%`, top: `${top}%` }]} />
-        </View>
+        <ThemedText type="data" style={styles.resetLabel}>
+          RESET
+        </ThemedText>
+      </Pressable>
+    </View>
+  );
+
+  return (
+    <Box hue="steering" label={track ? track.name : "TRACK MAP"} right={header} style={styles.box}>
+      <View style={styles.canvas} onLayout={onLayout}>
+        {fit ? (
+          <Svg width={size.w} height={size.h}>
+            {track ? (
+              <KnownTrack track={track} fit={fit} />
+            ) : complete ? (
+              <>
+                <Path d={path} stroke={TRACK_EDGE} strokeWidth={7} fill="none" strokeLinejoin="round" />
+                <Path d={path} stroke={TRACK_SURFACE} strokeWidth={4} fill="none" strokeLinejoin="round" />
+              </>
+            ) : (
+              <Path
+                d={path}
+                stroke={Colors.primary}
+                strokeOpacity={0.55}
+                strokeWidth={3}
+                fill="none"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            )}
+            {inSession ? <DriverMarkers fit={fit} width={size.w} height={size.h} self={self} /> : null}
+            {self ? (
+              <G transform={`translate(${self.x} ${self.y}) rotate(${(carHeading * 180) / Math.PI})`}>
+                <Path
+                  d={CAR_ARROW}
+                  fill={Colors.primary}
+                  stroke="rgba(255,255,255,0.9)"
+                  strokeWidth={1.5}
+                  strokeLinejoin="round"
+                />
+              </G>
+            ) : null}
+          </Svg>
+        ) : (
+          <ThemedText type="data" style={styles.hint}>
+            Mapping starts at the next lap
+          </ThemedText>
+        )}
+        <ServerLinkIndicator />
       </View>
     </Box>
   );
@@ -59,24 +504,68 @@ const styles = StyleSheet.create({
   box: {
     borderColor: HUE.steering.border,
     flex: 1,
+    minHeight: 0,
   },
-  mapWrap: {
-    width: "100%",
-    alignSelf: "center",
+  canvas: {
+    flex: 1,
+    minHeight: 0,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  map: {
-    width: "100%",
-    aspectRatio: 1174 / 481,
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
-  carDot: {
+  reset: {
+    borderWidth: 1,
+    borderColor: HUE.steering.border,
+    borderRadius: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  resetPressed: {
+    backgroundColor: HUE.steering.border,
+  },
+  resetLabel: {
+    fontFamily: "IBMPlexMono-Regular",
+    fontSize: 9,
+    letterSpacing: 1.7,
+    color: HUE.steering.label,
+  },
+  status: {
+    fontFamily: "IBMPlexMono-Regular",
+    fontSize: 9,
+    letterSpacing: 1.7,
+    color: Colors.primary,
+  },
+  statusDim: {
+    fontFamily: "IBMPlexMono-Regular",
+    fontSize: 9,
+    letterSpacing: 1.7,
+    color: Colors.textDim,
+  },
+  link: {
     position: "absolute",
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: Colors.primary,
-    borderColor: "rgba(255,255,255,0.9)",
-    borderWidth: 1.5,
-    marginLeft: -7,
-    marginTop: -7,
+    top: 6,
+    right: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  linkLabel: {
+    fontFamily: "IBMPlexMono-Regular",
+    fontSize: 8,
+    letterSpacing: 1.4,
+  },
+  linkDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  hint: {
+    fontFamily: "IBMPlexMono-Regular",
+    fontSize: 10,
+    color: Colors.textDim,
   },
 });
