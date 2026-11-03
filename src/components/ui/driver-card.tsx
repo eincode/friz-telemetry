@@ -8,7 +8,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 export interface Driver {
   id: string;
   fullName: string;
-  gamerId: string;
+  psnId: string;
   hasJoinedSession: boolean;
 }
 
@@ -16,7 +16,7 @@ const CARD_CUT = 14;
 
 export function DriverCard({
   fullName,
-  gamerId,
+  psnId,
   hasJoinedSession,
   index,
   selected = false,
@@ -24,7 +24,7 @@ export function DriverCard({
   onPress,
 }: {
   fullName: string;
-  gamerId: string;
+  psnId: string;
   hasJoinedSession: boolean;
   index: number;
   selected?: boolean;
@@ -48,7 +48,7 @@ export function DriverCard({
         selected: selected || hasJoinedSession,
         disabled: isDisabled,
       }}
-      accessibilityLabel={`Driver ${driverNumber} ${fullName}, ${gamerId}, ${joinedText}`}
+      accessibilityLabel={`Driver ${driverNumber} ${fullName}, ${psnId || "no PSN ID"}, ${joinedText}`}
       style={[
         styles.card,
         hasJoinedSession
@@ -89,7 +89,7 @@ export function DriverCard({
           {fullName.toUpperCase()}
         </ThemedText>
         <ThemedText style={styles.cardGamerId} numberOfLines={1}>
-          {gamerId}
+          {psnId || "—"}
         </ThemedText>
       </View>
 

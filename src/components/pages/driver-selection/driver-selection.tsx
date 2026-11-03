@@ -29,7 +29,7 @@ export function DriverSelection({
           <View key={d.id} style={styles.scrollCell}>
             <DriverCard
               fullName={d.fullName}
-              gamerId={d.gamerId}
+              psnId={d.psnId}
               hasJoinedSession={d.hasJoinedSession}
               index={index}
               selected={selectedId === d.id}

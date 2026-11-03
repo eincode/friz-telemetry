@@ -4,6 +4,7 @@ export interface JoinSessionResponse {
   token: string;
   driverId: number;
   name: string;
+  psnId: string;
 }
 
 export function joinSession(serverUrl: string, driverId: number) {

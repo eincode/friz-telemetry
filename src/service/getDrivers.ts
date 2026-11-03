@@ -6,6 +6,7 @@ export interface ApiDriver {
   id: number;
   name: string;
   country: string;
+  psnId: string;
   carCode: number;
   connected: boolean;
   lastSeen: number;
@@ -24,7 +25,7 @@ export function getDrivers(serverUrl: string) {
         (d): Driver => ({
           id: String(d.id),
           fullName: d.name,
-          gamerId: "FrizGrusz",
+          psnId: d.psnId ?? "",
           hasJoinedSession: d.connected,
         }),
       ),
