@@ -1,6 +1,7 @@
 import ky from "ky";
 
 import type { Driver } from "@/components/ui/driver-card";
+import { httpUrl } from "@/utils/serverUrl";
 
 export interface ApiDriver {
   id: number;
@@ -18,7 +19,7 @@ export interface GetDriversResponse {
 
 export function getDrivers(serverUrl: string) {
   return ky
-    .get(`http://${serverUrl}/drivers`)
+    .get(`${httpUrl(serverUrl)}/drivers`)
     .json<GetDriversResponse>()
     .then(({ drivers }) =>
       drivers.map(

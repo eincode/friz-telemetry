@@ -1,5 +1,7 @@
 import ky from "ky";
 
+import { httpUrl } from "@/utils/serverUrl";
+
 export interface RosterEntry {
   id: number;
   name: string;
@@ -22,5 +24,5 @@ export interface GetSessionResponse {
 }
 
 export function getSession(serverUrl: string) {
-  return ky.get(`http://${serverUrl}/session`).json<GetSessionResponse>();
+  return ky.get(`${httpUrl(serverUrl)}/session`).json<GetSessionResponse>();
 }
