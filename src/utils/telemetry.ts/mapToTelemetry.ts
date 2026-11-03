@@ -2,7 +2,8 @@
 import { Telemetry, TyreCorner } from "@/app/RaceDashboard";
 import { GT7Telemetry } from "./types";
 
-export function mapToTelemetry(t: GT7Telemetry): Telemetry {
+/** lapDeltaMs is stateful (needs lap history), so it is filled in by the caller. */
+export function mapToTelemetry(t: GT7Telemetry): Omit<Telemetry, "lapDeltaMs"> {
   // GT7 speed field is m/s — convert to km/h to match typical dashboard units.
   const speedKmh = Math.round(t.speed * 3.6);
 
@@ -26,11 +27,12 @@ export function mapToTelemetry(t: GT7Telemetry): Telemetry {
   return {
     // Approximation only — GT7 has no live position field.
     // raceStartPosition is the GRID position, not current running order.
-    position: t.raceStartPosition || 0,
+    // -1 (in a menu) is clamped so the dashboard never shows "P-1".
+    position: Math.max(0, t.raceStartPosition || 0),
     positionOf: t.preRaceCarCount || 0,
     carPosition: t.position,
 
-    lap: t.lapCount,
+    lap: Math.max(0, t.lapCount),
     lapOf: t.totalLaps,
 
     tyreTemps,
