@@ -22,12 +22,13 @@ const DEFAULT_TELEMETRY: Telemetry = {
   currentLapMs: 0,
   lastLapMs: null,
   bestLapMs: null,
+  lapDeltaMs: null,
   steeringWheelAngle: 0,
 };
 
 export function useTelemetryMapped(): Telemetry {
-  const { telemetry } = useConsoleConnectionStore((s) => s);
+  const { telemetry, lapDeltaMs } = useConsoleConnectionStore((s) => s);
 
   if (!telemetry) return DEFAULT_TELEMETRY;
-  return mapToTelemetry(telemetry);
+  return { ...mapToTelemetry(telemetry), lapDeltaMs };
 }

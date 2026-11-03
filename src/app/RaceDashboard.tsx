@@ -1,5 +1,6 @@
 import { DirectorMessage, DirectorPopup } from "@/components/pages/race-dashboard/director-popup";
 import { FuelBox } from "@/components/pages/race-dashboard/fuel-box";
+import { GapBox } from "@/components/pages/race-dashboard/gap-box";
 import { GearSpeedBox } from "@/components/pages/race-dashboard/gear-speed-box";
 import { InputsBox } from "@/components/pages/race-dashboard/inputs-box";
 import { LapBox } from "@/components/pages/race-dashboard/lap-box";
@@ -8,18 +9,22 @@ import { ManagerScreen } from "@/components/pages/race-dashboard/manager-screen"
 import { MapBox } from "@/components/pages/race-dashboard/map-box";
 import { PositionBox } from "@/components/pages/race-dashboard/position-box";
 import { RpmBar } from "@/components/pages/race-dashboard/rpm-bar";
+import { SectorBox } from "@/components/pages/race-dashboard/sector-box";
 import { TimesBox } from "@/components/pages/race-dashboard/times-box";
 import { TyreBox } from "@/components/pages/race-dashboard/tyre-box";
 import { Colors } from "@/constants/theme";
 import { useTelemetryMapped } from "@/hooks/use-telemetry-mapped";
 import { useConsoleConnectionStore } from "@/store/consoleConnectionStore";
+import { useOverlayStore } from "@/store/overlayStore";
 import { useServerStore } from "@/store/serverStore";
 import { useTelemetryServerStore } from "@/store/telemetryServerStore";
 import { formatLapTime } from "@/utils/formatLapTime";
+import { wsUrl } from "@/utils/serverUrl";
 import { startTelemetryBridge, stopTelemetryBridge } from "@/utils/telemetry.ts/telemetryServerBridge";
+import { TRACKS } from "@/utils/telemetry.ts/trackMatch";
 import { Vec3 } from "@/utils/telemetry.ts/types";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppState, LayoutChangeEvent, StyleSheet, View, ViewStyle } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
@@ -52,6 +57,8 @@ export interface Telemetry {
   currentLapMs: number;
   lastLapMs: number | null;
   bestLapMs: number | null;
+  /** Gap to the previous lap at the same track point; negative = faster. */
+  lapDeltaMs: number | null;
   steeringWheelAngle: number | null;
 }
 
@@ -63,6 +70,8 @@ export default function TelemetryDashboardScreen() {
     status: telemetryServerStatus,
   } = useTelemetryServerStore((s) => s);
   const { token, serverUrl } = useServerStore((s) => s);
+  const connectOverlay = useOverlayStore((s) => s.connect);
+  const disconnectOverlay = useOverlayStore((s) => s.disconnect);
   const { disconnect } = useConsoleConnectionStore((s) => s);
   const onBack = () => {
     disconnect();
@@ -80,13 +89,15 @@ export default function TelemetryDashboardScreen() {
     });
 
   useEffect(() => {
-    if (!token) {
+    if (!token || !serverUrl) {
       return;
     }
 
     const connect = () => {
-      connectTelemetryServer(`ws://${serverUrl}`, token);
+      connectTelemetryServer(wsUrl(serverUrl), token);
       startTelemetryBridge();
+      // Everyone's live positions for the map.
+      connectOverlay(`${wsUrl(serverUrl)}/overlay`);
     };
 
     connect();
@@ -101,10 +112,25 @@ export default function TelemetryDashboardScreen() {
       subscription.remove();
       disconnectTelemetryServer();
       stopTelemetryBridge();
+      disconnectOverlay();
     };
-  }, [token, serverUrl, connectTelemetryServer, disconnectTelemetryServer]);
+  }, [token, serverUrl, connectTelemetryServer, disconnectTelemetryServer, connectOverlay, disconnectOverlay]);
 
   const d = useTelemetryMapped();
+  const trackMap = useConsoleConnectionStore((s) => s.trackMap);
+  const sessionId = useConsoleConnectionStore((s) => s.sessionId);
+  const resetSession = useConsoleConnectionStore((s) => s.resetSession);
+  const carHeading = useConsoleConnectionStore((s) => s.carHeading);
+  const track = useConsoleConnectionStore((s) => s.track);
+  const sectorTimes = useConsoleConnectionStore((s) => s.sectorTimes);
+  // In a server session the map is pinned to the session's track, so
+  // everyone is drawn on the same layout whatever the local matcher thinks.
+  // Falls back to the local match when the server's track isn't bundled here.
+  const serverTrackId = useOverlayStore((s) => s.trackId);
+  const serverTrack = useMemo(
+    () => (serverTrackId ? (TRACKS.find((t) => t.id === serverTrackId) ?? null) : null),
+    [serverTrackId],
+  );
 
   // Exact viewport width, measured from the real container (not window dims),
   // so pages are pixel-exact and the dashboard never pokes past the right edge.
@@ -171,7 +197,9 @@ export default function TelemetryDashboardScreen() {
           <Animated.View style={[styles.pager, pagerStyle]}>
             {/* Swipe-left page — Manager */}
             <View style={[styles.root, pad]}>
+              {/* Remounts on a track change so fuel-per-lap history starts over. */}
               <ManagerScreen
+                key={sessionId}
                 throttle={d.throttle}
                 brake={d.brake}
                 tyreTemps={d.tyreTemps}
@@ -224,16 +252,21 @@ export default function TelemetryDashboardScreen() {
               ) : null}
             </View>
 
-            {/* Swipe-right page — Map */}
+            {/* Swipe-right page — Map, with the leaderboard in a server session. */}
             <View style={[styles.root, styles.mapPage, pad]}>
-              <View style={styles.mapRow}>
-                <View style={styles.mapHalf}>
-                  <MapBox carPosition={d.carPosition} />
-                </View>
-                <View style={styles.mapHalf}>
-                  <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
-                  <LeaderboardBox currentPosition={d.position} totalPlayers={d.positionOf} />
-                </View>
+              <View style={styles.mapHalf}>
+                <MapBox
+                  carPosition={d.carPosition}
+                  carHeading={carHeading}
+                  trackMap={trackMap}
+                  track={(token ? serverTrack : null) ?? track}
+                  onReset={resetSession}
+                />
+              </View>
+              <View style={styles.mapHalf}>
+                <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
+                {token ? <LeaderboardBox /> : <SectorBox sectors={sectorTimes} currentLapMs={d.currentLapMs} />}
+                <GapBox gapMs={d.lapDeltaMs} />
               </View>
             </View>
           </Animated.View>
@@ -253,8 +286,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     gap: 9,
   },
-  mapPage: { minHeight: 0 },
-  mapRow: { flex: 1, flexDirection: "row", gap: 9, minHeight: 0 },
+  mapPage: { minHeight: 0, flexDirection: "row" },
   mapHalf: { flex: 1, minWidth: 0, gap: 9 },
 
   grid: { flex: 1, flexDirection: "row", gap: 9, minHeight: 0 },
