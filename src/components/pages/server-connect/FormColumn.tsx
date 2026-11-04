@@ -19,6 +19,8 @@ export function FormColumn({
   address,
   onChangeAddress,
   onConnect,
+  asDirector,
+  onToggleDirector,
   errorCode,
   errorMessage,
 }: {
@@ -26,6 +28,8 @@ export function FormColumn({
   address: string;
   onChangeAddress: (value: string) => void;
   onConnect: () => void;
+  asDirector: boolean;
+  onToggleDirector: () => void;
   errorCode?: string;
   errorMessage?: string;
 }) {
@@ -135,6 +139,22 @@ export function FormColumn({
         </Pressable>
       </View>
 
+      <Pressable
+        onPress={onToggleDirector}
+        disabled={connecting}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: asDirector, disabled: connecting }}
+        hitSlop={8}
+        style={styles.checkRow}
+      >
+        <View style={[styles.checkBox, asDirector && styles.checkBoxOn]}>
+          {asDirector ? <View style={styles.checkMark} /> : null}
+        </View>
+        <ThemedText type="data" style={[styles.checkLabel, asDirector && { color: Colors.accent }]}>
+          CONNECT AS DIRECTOR
+        </ThemedText>
+      </Pressable>
+
       <ThemedText type="data" style={styles.formHint}>
         {connecting
           ? "PROBING PORT · TIMEOUT 8S"
@@ -224,6 +244,25 @@ const styles = StyleSheet.create({
     fontFamily: "SairaCondensed-Bold",
     fontSize: 19,
     letterSpacing: 3.4,
+  },
+
+  checkRow: { flexDirection: "row", alignItems: "center", gap: 10, alignSelf: "flex-start" },
+  checkBox: {
+    width: 18,
+    height: 18,
+    borderWidth: 1,
+    borderColor: Colors.controlBorder,
+    backgroundColor: Colors.panel,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkBoxOn: { borderColor: Colors.accent, backgroundColor: Colors.accentDim },
+  checkMark: { width: 8, height: 8, backgroundColor: Colors.accent },
+  checkLabel: {
+    fontFamily: "IBMPlexMono-Regular",
+    fontSize: 11,
+    letterSpacing: 1.6,
+    color: Colors.textSecondary,
   },
 
   formHint: {

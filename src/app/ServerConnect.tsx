@@ -21,6 +21,7 @@ const STATUS: Record<ServerState, { text: string; color: string }> = {
 export default function ServerConnectPage() {
   const router = useRouter();
   const [address, setAddress] = useState("");
+  const [asDirector, setAsDirector] = useState(false);
   const insets = useSafeAreaInsets();
   const pad: ViewStyle = {
     paddingLeft: Math.max(30, insets.left),
@@ -44,7 +45,8 @@ export default function ServerConnectPage() {
       {
         onSuccess: () => {
           setServerUrl(address);
-          router.push("/DriverSelection");
+          // A director picks no driver; they watch the session as a whole.
+          router.push(asDirector ? "/Director" : "/DriverSelection");
         },
       },
     );
@@ -61,6 +63,8 @@ export default function ServerConnectPage() {
           address={address}
           onChangeAddress={setAddress}
           onConnect={handleConnect}
+          asDirector={asDirector}
+          onToggleDirector={() => setAsDirector((v) => !v)}
           errorCode={error?.name}
           errorMessage={error?.message}
         />

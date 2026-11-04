@@ -20,7 +20,7 @@ const DISCONNECTED_OPACITY = 0.4;
 const rowLayout = LinearTransition.duration(220).easing(Easing.out(Easing.cubic));
 
 /** "+0.412" under a minute, "+1:02.345" above; "--" when there is no gap. */
-function formatGap(s: number | null): string {
+export function formatGap(s: number | null): string {
   if (s === null) return "--";
   const m = Math.floor(s / 60);
   const rest = (s - m * 60).toFixed(3);
