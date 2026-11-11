@@ -38,7 +38,7 @@ interface OverlayStore {
   /** Track the session runs on; matches the ids in TRACKS. */
   trackId: string | null;
   mode: SessionMode | null;
-  /** Live car positions, ~15 Hz. */
+  /** Live car positions, up to ~25 Hz (every frame from a 20 Hz server). */
   cars: OverlayCar[];
   /**
    * Places and gaps, leader first, refreshed once a second so two drivers
@@ -69,10 +69,13 @@ interface StateMessage {
 }
 
 /**
- * The server broadcasts up to 60 Hz; the map only needs ~15. State frames
- * arriving sooner than this after the last one are dropped unparsed.
+ * State frames are published at most this often (~25 Hz), always the newest:
+ * a frame arriving sooner waits, and is replaced by any newer one that comes
+ * in meanwhile, unparsed. That keeps every frame from a 20 Hz server (50 ms
+ * apart), thins out a faster one, and after a choppy patch, when delayed
+ * frames arrive in a burst, shows the latest of them rather than the first.
  */
-const PUBLISH_INTERVAL_MS = 66;
+const PUBLISH_INTERVAL_MS = 40;
 /** Standings are republished at most this often, independent of positions. */
 const STANDINGS_INTERVAL_MS = 1000;
 /** JSON.stringify keeps key order, so every state frame starts like this. */
@@ -88,6 +91,15 @@ let retryAttempt = 0;
 let retryHandle: ReturnType<typeof setTimeout> | null = null;
 let lastStateAt = 0;
 let lastStandingsAt = 0;
+/** Newest state frame not yet published, raw. */
+let pendingState: string | null = null;
+let stateHandle: ReturnType<typeof setTimeout> | null = null;
+
+function clearPendingState() {
+  if (stateHandle) clearTimeout(stateHandle);
+  stateHandle = null;
+  pendingState = null;
+}
 
 function clearRetryTimer() {
   if (retryHandle) {
@@ -141,6 +153,30 @@ function toStandings(msg: StateMessage): OverlayStanding[] {
 }
 
 export const useOverlayStore = create<OverlayStore>()((set) => {
+  /** Parses and publishes the newest pending state frame. */
+  const publishState = () => {
+    stateHandle = null;
+    const data = pendingState;
+    pendingState = null;
+    if (!data) return;
+    let msg: StateMessage;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return;
+    }
+    const now = Date.now();
+    lastStateAt = now;
+    const standingsDue = now - lastStandingsAt >= STANDINGS_INTERVAL_MS;
+    if (standingsDue) lastStandingsAt = now;
+    set({
+      trackId: msg.raceState.trackId,
+      mode: msg.raceState.mode,
+      cars: toCars(msg),
+      ...(standingsDue ? { standings: toStandings(msg) } : null),
+    });
+  };
+
   const open = () => {
     if (!target) return;
     const socket = new WebSocket(target);
@@ -153,27 +189,18 @@ export const useOverlayStore = create<OverlayStore>()((set) => {
 
     socket.onmessage = (e: WebSocketMessageEvent) => {
       if (typeof e.data !== "string") return;
-      const now = Date.now();
-      if (e.data.startsWith(STATE_PREFIX) && now - lastStateAt < PUBLISH_INTERVAL_MS) return;
+      if (e.data.startsWith(STATE_PREFIX)) {
+        pendingState = e.data;
+        stateHandle ??= setTimeout(publishState, Math.max(0, PUBLISH_INTERVAL_MS - (Date.now() - lastStateAt)));
+        return;
+      }
       let msg: RosterMessage | StateMessage;
       try {
         msg = JSON.parse(e.data);
       } catch {
         return;
       }
-      if (msg.type === "roster") {
-        set({ roster: msg.roster });
-      } else if (msg.type === "state") {
-        lastStateAt = now;
-        const standingsDue = now - lastStandingsAt >= STANDINGS_INTERVAL_MS;
-        if (standingsDue) lastStandingsAt = now;
-        set({
-          trackId: msg.raceState.trackId,
-          mode: msg.raceState.mode,
-          cars: toCars(msg),
-          ...(standingsDue ? { standings: toStandings(msg) } : null),
-        });
-      }
+      if (msg.type === "roster") set({ roster: msg.roster });
     };
 
     // RN usually fires onerror then onclose; whichever comes first handles
@@ -215,6 +242,7 @@ export const useOverlayStore = create<OverlayStore>()((set) => {
       }
       if (ws) detach(ws);
       ws = null;
+      clearPendingState();
       // An explicit connect (e.g. app back in the foreground) skips any
       // pending backoff and tries right away.
       clearRetryTimer();
@@ -230,6 +258,7 @@ export const useOverlayStore = create<OverlayStore>()((set) => {
       // Handlers are detached first so the close isn't treated as a drop.
       if (ws) detach(ws);
       ws = null;
+      clearPendingState();
       lastStateAt = 0;
       lastStandingsAt = 0;
       set({ status: "idle", roster: [], trackId: null, mode: null, cars: [], standings: [] });
