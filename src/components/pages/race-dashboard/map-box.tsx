@@ -8,9 +8,9 @@ import { useTelemetryServerStore } from "@/store/telemetryServerStore";
 import { TrackMapSnapshot } from "@/utils/telemetry.ts/trackMap";
 import { TrackData } from "@/utils/telemetry.ts/trackMatch";
 import { Vec3 } from "@/utils/telemetry.ts/types";
-import { useMemo, useState } from "react";
-import { LayoutChangeEvent, Pressable, StyleSheet, View } from "react-native";
-import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from "react-native-svg";
+import { Fragment, memo, useMemo, useState } from "react";
+import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
+import Svg, { Path } from "react-native-svg";
 
 /** Inset between the map and the box edges, in px. */
 const PADDING = 12;
@@ -180,6 +180,53 @@ function KnownTrack({ track, fit }: { track: TrackData; fit: Fit }) {
   );
 }
 
+/**
+ * The track itself, on its own canvas under the moving markers. A known
+ * track is hundreds of road quads, and react-native-svg repaints a whole
+ * canvas whenever any shape in it changes; sharing one with the car arrow
+ * meant repainting the road on every telemetry packet. Memoised so it only
+ * redraws when the track, the fit or the traced outline actually changes.
+ */
+const TrackLayer = memo(function TrackLayer({
+  width,
+  height,
+  fit,
+  track,
+  path,
+  complete,
+}: {
+  width: number;
+  height: number;
+  fit: Fit;
+  track: TrackData | null;
+  /** Traced outline, used when there is no known track. */
+  path: string;
+  complete: boolean;
+}) {
+  return (
+    <Svg width={width} height={height}>
+      {track ? (
+        <KnownTrack track={track} fit={fit} />
+      ) : complete ? (
+        <>
+          <Path d={path} stroke={TRACK_EDGE} strokeWidth={7} fill="none" strokeLinejoin="round" />
+          <Path d={path} stroke={TRACK_SURFACE} strokeWidth={4} fill="none" strokeLinejoin="round" />
+        </>
+      ) : (
+        <Path
+          d={path}
+          stroke={Colors.primary}
+          strokeOpacity={0.55}
+          strokeWidth={3}
+          fill="none"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      )}
+    </Svg>
+  );
+});
+
 /** "M. VERSTAPPEN" → "VER"; falls back to the driver id when there is no name. */
 function shortName(name: string | null | undefined, id: number): string {
   const words = (name ?? "").trim().split(/\s+/).filter(Boolean);
@@ -228,51 +275,23 @@ interface Marker {
   label: string;
 }
 
+interface PlacedTag extends Marker {
+  box: Area;
+  /** Where the leader line meets the tag. */
+  ex: number;
+  ey: number;
+  rankW: number;
+  color: string;
+}
+
 /**
- * Every driver in the session from the server's overlay feed. Other cars get
- * a dot; every car, ours included, gets a tag. Each tag tries directions
- * fanning out from "away from the map centre" at a few lengths, and takes the
- * first spot that stays inside the map without covering an earlier tag or any
- * car. A tag keeps last tick's spot while it is still clear, so tags don't
- * flicker. Subscribes to the feed itself so its ~15 Hz updates only redraw
- * the markers, not the track.
+ * Each tag tries directions fanning out from "away from the map centre" at a
+ * few lengths, and takes the first spot that stays inside the map without
+ * covering an earlier tag or any car. A tag keeps last time's spot while it
+ * is still clear, so tags don't flicker. Markers are placed in order, so the
+ * leader's tag goes first and never moves.
  */
-function DriverMarkers({
-  fit,
-  width,
-  height,
-  self,
-}: {
-  fit: Fit;
-  width: number;
-  height: number;
-  /** Our car's screen position from local telemetry; null when off track. */
-  self: { x: number; y: number } | null;
-}) {
-  const cars = useOverlayStore((s) => s.cars);
-  const standings = useOverlayStore((s) => s.standings);
-  const roster = useOverlayStore((s) => s.roster);
-  const selfId = useServerStore((s) => s.driverId);
-  const selfName = useServerStore((s) => s.driverName);
-  const names = useMemo(() => new Map(roster.map((r) => [r.id, r.name])), [roster]);
-
-  const positions = useMemo(() => new Map(cars.map((c) => [c.id, c.position])), [cars]);
-
-  // Places come from the once-a-second standings so tags agree with the
-  // leaderboard; positions are live. Walking the standings places the
-  // leader's tag first so it never moves. A driver who just joined shows up
-  // at the next standings refresh.
-  const markers: Marker[] = standings.flatMap((s) => {
-    const isSelf = s.id === selfId;
-    const p = positions.get(s.id);
-    // Our own car is drawn where local telemetry puts it: fresher than the server's copy.
-    const at = isSelf ? self : p && { x: projectX(fit, p[0]), y: projectY(fit, p[1]) };
-    if (!at) return [];
-    const name = isSelf ? (selfName ?? names.get(s.id)) : names.get(s.id);
-    return [{ id: s.id, rank: s.rank, self: isSelf, connected: s.connected, ...at, label: shortName(name, s.id) }];
-  });
-  if (markers.length === 0) return null;
-
+function placeTags(markers: Marker[], width: number, height: number): PlacedTag[] {
   const inside = (b: Area) => b.x >= 2 && b.y >= 2 && b.x + b.w <= width - 2 && b.y + b.h <= height - 2;
   const clampArea = (b: Area): Area => ({
     ...b,
@@ -285,7 +304,7 @@ function DriverMarkers({
     return { x: m.x - r, y: m.y - r, w: r * 2, h: r * 2 };
   });
   const placed: Area[] = [];
-  const tags = markers.map((m) => {
+  return markers.map((m) => {
     const out = Math.atan2(m.y - height / 2, m.x - width / 2);
     const rankW = String(m.rank).length * TAG_RANK_SIZE * MONO_ADVANCE;
     const nameW = m.label.length * TAG_NAME_SIZE * MONO_ADVANCE;
@@ -322,52 +341,149 @@ function DriverMarkers({
     const color = m.self ? Colors.primary : m.rank === 1 ? LEADER_COLOR : OPPONENT_COLOR;
     return { ...m, box, ex, ey, rankW, color };
   });
+}
+
+/**
+ * Every driver in the session from the server's overlay feed. Other cars get
+ * a dot; every car, ours included, gets a tag.
+ *
+ * Tag placement is a search over many candidate spots, so it runs only when
+ * the overlay feed or the map changes (~20 Hz), not on every telemetry
+ * packet. It uses the server's copy of every position, ours included. Our
+ * own tag then keeps its placed spot relative to our car and is shifted to
+ * the arrow's live position on every packet, which is just a move of a few
+ * native views.
+ */
+function DriverMarkers({
+  fit,
+  width,
+  height,
+  self,
+}: {
+  fit: Fit;
+  width: number;
+  height: number;
+  /** Our car's screen position from local telemetry; null when off track. */
+  self: { x: number; y: number } | null;
+}) {
+  const cars = useOverlayStore((s) => s.cars);
+  const standings = useOverlayStore((s) => s.standings);
+  const roster = useOverlayStore((s) => s.roster);
+  const selfId = useServerStore((s) => s.driverId);
+  const selfName = useServerStore((s) => s.driverName);
+  const names = useMemo(() => new Map(roster.map((r) => [r.id, r.name])), [roster]);
+  const positions = useMemo(() => new Map(cars.map((c) => [c.id, c.position])), [cars]);
+
+  // Places come from the once-a-second standings so tags agree with the
+  // leaderboard; positions are live. A driver who just joined shows up at the
+  // next standings refresh.
+  const tags = useMemo(() => {
+    const markers: Marker[] = standings.flatMap((s) => {
+      const p = positions.get(s.id);
+      if (!p) return [];
+      const isSelf = s.id === selfId;
+      const name = isSelf ? (selfName ?? names.get(s.id)) : names.get(s.id);
+      return [
+        {
+          id: s.id,
+          rank: s.rank,
+          self: isSelf,
+          connected: s.connected,
+          x: projectX(fit, p[0]),
+          y: projectY(fit, p[1]),
+          label: shortName(name, s.id),
+        },
+      ];
+    });
+    return placeTags(markers, width, height);
+  }, [standings, positions, names, selfId, selfName, fit, width, height]);
 
   return (
     <>
       {/* Lines and tags first, dots last, so no tag ever hides a car. */}
-      {tags.map((t) => (
-        <G key={`tag-${t.id}`} opacity={t.connected ? 1 : DISCONNECTED_OPACITY}>
-          <Line x1={t.x} y1={t.y} x2={t.ex} y2={t.ey} stroke={LEADER_LINE} strokeWidth={1} />
-          <Rect x={t.box.x} y={t.box.y} width={t.box.w} height={t.box.h} fill={TAG_BG} />
-          <Rect x={t.box.x} y={t.box.y} width={TAG_STRIP_W} height={t.box.h} fill={t.color} />
-          <SvgText
-            x={t.box.x + TAG_STRIP_W + TAG_PAD_X}
-            y={t.box.y + t.box.h / 2 + TAG_RANK_SIZE * 0.35}
-            fontFamily="IBMPlexMono-Bold"
-            fontSize={TAG_RANK_SIZE}
-            fill={TAG_INK_DIM}
-          >
-            {t.rank}
-          </SvgText>
-          <SvgText
-            x={t.box.x + TAG_STRIP_W + TAG_PAD_X + t.rankW + TAG_GAP}
-            y={t.box.y + t.box.h / 2 + TAG_NAME_SIZE * 0.35}
-            fontFamily="IBMPlexMono-Bold"
-            fontSize={TAG_NAME_SIZE}
-            fill={t.self ? Colors.primary : TAG_INK}
-          >
-            {t.label}
-          </SvgText>
-        </G>
-      ))}
+      {tags.map((t) => {
+        // Our tag rides along with the arrow; hidden while we're off track.
+        if (t.self && !self) return null;
+        const dx = t.self && self ? self.x - t.x : 0;
+        const dy = t.self && self ? self.y - t.y : 0;
+        const opacity = t.connected ? 1 : DISCONNECTED_OPACITY;
+        const len = Math.hypot(t.ex - t.x, t.ey - t.y);
+        return (
+          <Fragment key={`tag-${t.id}`}>
+            {/* Leader line: a 1px bar centred between car and tag, turned to point at both. */}
+            <View
+              style={[
+                styles.leader,
+                {
+                  opacity,
+                  width: len,
+                  left: (t.x + t.ex) / 2 - len / 2 + dx,
+                  top: (t.y + t.ey) / 2 - 0.5 + dy,
+                  transform: [{ rotate: `${Math.atan2(t.ey - t.y, t.ex - t.x)}rad` }],
+                },
+              ]}
+            />
+            <View
+              style={[
+                styles.tag,
+                { opacity, left: t.box.x + dx, top: t.box.y + dy, width: t.box.w, borderLeftColor: t.color },
+              ]}
+            >
+              <Text style={styles.tagRank}>{t.rank}</Text>
+              <Text style={[styles.tagName, t.self && styles.tagNameSelf]}>{t.label}</Text>
+            </View>
+          </Fragment>
+        );
+      })}
       {tags
         .filter((t) => !t.self)
         .map((t) => (
-          <Circle
+          <View
             key={`dot-${t.id}`}
-            cx={t.x}
-            cy={t.y}
-            r={DOT_R}
-            fill={t.color}
-            stroke={TAG_INK}
-            strokeWidth={1.25}
-            opacity={t.connected ? 1 : DISCONNECTED_OPACITY}
+            style={[
+              styles.dot,
+              {
+                left: t.x - DOT_R,
+                top: t.y - DOT_R,
+                backgroundColor: t.color,
+                opacity: t.connected ? 1 : DISCONNECTED_OPACITY,
+              },
+            ]}
           />
         ))}
     </>
   );
 }
+
+/** Box around the car arrow, wide enough for its points; it rotates about its centre. */
+const CAR_BOX = 24;
+
+/**
+ * Our car: a fixed SVG arrow inside a plain view that is moved and turned
+ * with a transform. The SVG never changes, so it is drawn once; per-packet
+ * updates are only a transform on a native view.
+ */
+function CarArrow({ x, y, heading }: { x: number; y: number; heading: number }) {
+  return (
+    <View
+      style={[
+        styles.car,
+        { transform: [{ translateX: x - CAR_BOX / 2 }, { translateY: y - CAR_BOX / 2 }, { rotate: `${heading}rad` }] },
+      ]}
+    >
+      <CarArrowShape />
+    </View>
+  );
+}
+
+const CarArrowShape = memo(function CarArrowShape() {
+  const h = CAR_BOX / 2;
+  return (
+    <Svg width={CAR_BOX} height={CAR_BOX} viewBox={`${-h} ${-h} ${CAR_BOX} ${CAR_BOX}`}>
+      <Path d={CAR_ARROW} fill={Colors.primary} stroke="rgba(255,255,255,0.9)" strokeWidth={1.5} strokeLinejoin="round" />
+    </Svg>
+  );
+});
 
 /**
  * Small dot over the map's top-right corner showing the multi-driver server
@@ -430,7 +546,12 @@ export function MapBox({
   // All-zero position is what GT7 sends outside of a session.
   const onTrack = !(carPosition.x === 0 && carPosition.y === 0 && carPosition.z === 0);
   const self = fit && onTrack ? { x: projectX(fit, carPosition.x), y: projectY(fit, carPosition.z) } : null;
-  const path = useMemo(() => (fit ? buildPath(points, fit, complete) : ""), [points, fit, complete]);
+  // Not needed under a known track; skipping it keeps the track layer from
+  // redrawing while the trace keeps growing underneath.
+  const path = useMemo(
+    () => (fit && !track ? buildPath(points, fit, complete) : ""),
+    [points, fit, complete, track],
+  );
 
   const header = (
     <View style={styles.header}>
@@ -457,43 +578,22 @@ export function MapBox({
     <Box hue="steering" label={track ? track.name : "TRACK MAP"} right={header} style={styles.box}>
       <View style={styles.canvas} onLayout={onLayout}>
         {fit ? (
-          <Svg width={size.w} height={size.h}>
-            {track ? (
-              <KnownTrack track={track} fit={fit} />
-            ) : complete ? (
-              <>
-                <Path d={path} stroke={TRACK_EDGE} strokeWidth={7} fill="none" strokeLinejoin="round" />
-                <Path d={path} stroke={TRACK_SURFACE} strokeWidth={4} fill="none" strokeLinejoin="round" />
-              </>
-            ) : (
-              <Path
-                d={path}
-                stroke={Colors.primary}
-                strokeOpacity={0.55}
-                strokeWidth={3}
-                fill="none"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            )}
-            {inSession ? <DriverMarkers fit={fit} width={size.w} height={size.h} self={self} /> : null}
-            {self ? (
-              <G transform={`translate(${self.x} ${self.y}) rotate(${(carHeading * 180) / Math.PI})`}>
-                <Path
-                  d={CAR_ARROW}
-                  fill={Colors.primary}
-                  stroke="rgba(255,255,255,0.9)"
-                  strokeWidth={1.5}
-                  strokeLinejoin="round"
-                />
-              </G>
-            ) : null}
-          </Svg>
-        ) : (
+          <>
+            <TrackLayer width={size.w} height={size.h} fit={fit} track={track} path={path} complete={complete} />
+            {/* Everything that moves is plain native views over the track, not
+                SVG: on Android any change to an SVG canvas re-allocates and
+                repaints its whole bitmap, and doing that per packet starved
+                the app enough to delay the telemetry stream itself. */}
+            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+              {inSession ? <DriverMarkers fit={fit} width={size.w} height={size.h} self={self} /> : null}
+              {self ? <CarArrow x={self.x} y={self.y} heading={carHeading} /> : null}
+            </View>
+          </>
+        ) : size.w > 0 ? (
           <ThemedText type="data" style={styles.hint}>
             Mapping starts at the next lap
           </ThemedText>
-        )}
+        ) : null /* Not measured yet (just mounted): don't flash the hint. */}
         <ServerLinkIndicator />
       </View>
     </Box>
@@ -562,6 +662,53 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
+  },
+  leader: {
+    position: "absolute",
+    height: 1,
+    backgroundColor: LEADER_LINE,
+  },
+  tag: {
+    position: "absolute",
+    height: TAG_H,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: TAG_GAP,
+    paddingLeft: TAG_PAD_X,
+    backgroundColor: TAG_BG,
+    borderLeftWidth: TAG_STRIP_W,
+  },
+  tagRank: {
+    flexShrink: 0,
+    fontFamily: "IBMPlexMono-Bold",
+    fontSize: TAG_RANK_SIZE,
+    color: TAG_INK_DIM,
+    includeFontPadding: false,
+  },
+  tagName: {
+    flexShrink: 0,
+    fontFamily: "IBMPlexMono-Bold",
+    fontSize: TAG_NAME_SIZE,
+    color: TAG_INK,
+    includeFontPadding: false,
+  },
+  tagNameSelf: {
+    color: Colors.primary,
+  },
+  dot: {
+    position: "absolute",
+    width: DOT_R * 2,
+    height: DOT_R * 2,
+    borderRadius: DOT_R,
+    borderWidth: 1.25,
+    borderColor: TAG_INK,
+  },
+  car: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width: CAR_BOX,
+    height: CAR_BOX,
   },
   hint: {
     fontFamily: "IBMPlexMono-Regular",
