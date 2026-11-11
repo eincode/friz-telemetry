@@ -37,7 +37,6 @@ interface ConsoleConnectionState {
    * right), positive turns towards +Z (screen down). See HeadingTracker.
    */
   carHeading: number;
-  rawTelemetry: Buffer | null;
   connect: (initialIp?: string) => void;
   disconnect: () => void;
   /** Starts a fresh session: clears the track map, lap delta and per-session history. */
@@ -45,6 +44,20 @@ interface ConsoleConnectionState {
 }
 
 const FIRST_PACKET_TIMEOUT_MS = 8000;
+
+type RawTelemetryListener = (raw: Buffer) => void;
+const rawListeners = new Set<RawTelemetryListener>();
+
+/**
+ * Every decrypted packet, at full rate and outside React state (the store
+ * itself is throttled for the UI). Returns the unsubscribe function.
+ */
+export function subscribeRawTelemetry(listener: RawTelemetryListener): () => void {
+  rawListeners.add(listener);
+  return () => {
+    rawListeners.delete(listener);
+  };
+}
 
 let conn: GT7Connection | null = null;
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -105,7 +118,6 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
     sectorTimes: EMPTY_SECTOR_TIMES,
     sessionId: 0,
     carHeading: 0,
-    rawTelemetry: null,
 
     connect: () => {
       if (conn) return;
@@ -134,7 +146,7 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
           }
         },
         (rawTelemetry) => {
-          set({ rawTelemetry: rawTelemetry });
+          rawListeners.forEach((listener) => listener(rawTelemetry));
         },
         (ip) => {
           set({ connectedIp: ip });
