@@ -144,12 +144,24 @@ export default function TelemetryDashboardScreen() {
     }
     pageW.value = w;
   };
+  // Only the page in view is rendered, so the others cost nothing per
+  // packet; while a swipe is under way its neighbours are rendered too, so
+  // they slide in with their content.
+  const [page, setPage] = useState(1);
+  const [swiping, setSwiping] = useState(false);
+  const settle = (idx: number) => {
+    setPage(idx);
+    setSwiping(false);
+  };
+  const shows = (idx: number) => idx === page || (swiping && Math.abs(idx - page) === 1);
+
   const panStartX = useSharedValue(0);
   const pan = Gesture.Pan()
     .activeOffsetX([-10, 10])
     .failOffsetY([-15, 15])
     .onStart(() => {
       panStartX.value = translateX.value;
+      scheduleOnRN(setSwiping, true);
     })
     .onUpdate((e) => {
       translateX.value = Math.max(-pageW.value * 2, Math.min(0, panStartX.value + e.translationX));
@@ -161,10 +173,17 @@ export default function TelemetryDashboardScreen() {
       else if (e.velocityX > 500) idx -= 1;
       idx = Math.max(0, Math.min(2, idx));
       // withTiming + ease-out: settles exactly on target, no spring overshoot/jiggle.
-      translateX.value = withTiming(-idx * w, {
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
-      });
+      translateX.value = withTiming(
+        -idx * w,
+        {
+          duration: 220,
+          easing: Easing.out(Easing.cubic),
+        },
+        (finished) => {
+          // Not finished means a new swipe took over; that one settles instead.
+          if (finished) scheduleOnRN(settle, idx);
+        },
+      );
     });
   const pagerStyle = useAnimatedStyle(() => ({
     width: pageW.value * 3,
@@ -196,49 +215,55 @@ export default function TelemetryDashboardScreen() {
           <Animated.View style={[styles.pager, pagerStyle]}>
             {/* Swipe-left page — Manager */}
             <View style={[styles.root, pad]}>
-              <ManagerScreen
-                throttle={d.throttle}
-                brake={d.brake}
-                tyreTemps={d.tyreTemps}
-                fuel={d.fuel}
-                lastLapMs={d.lastLapMs}
-                bestLapMs={d.bestLapMs}
-              />
+              {shows(0) ? (
+                <ManagerScreen
+                  throttle={d.throttle}
+                  brake={d.brake}
+                  tyreTemps={d.tyreTemps}
+                  fuel={d.fuel}
+                  lastLapMs={d.lastLapMs}
+                  bestLapMs={d.bestLapMs}
+                />
+              ) : null}
             </View>
 
             <View style={[styles.root, pad]}>
-              <RpmBar rpm={d.rpm} minAlertRpm={d.minAlertRpm} maxAlertRpm={d.maxAlertRpm} />
+              {shows(1) ? (
+                <>
+                  <RpmBar rpm={d.rpm} minAlertRpm={d.minAlertRpm} maxAlertRpm={d.maxAlertRpm} />
 
-              <View style={styles.grid}>
-                {/* left column */}
-                <View style={styles.leftCol}>
-                  <View style={styles.row9}>
-                    <PositionBox currentPos={d.position} totalPlayers={d.positionOf} />
-                    <LapBox currentLap={d.lap} totalLap={d.lapOf} />
+                  <View style={styles.grid}>
+                    {/* left column */}
+                    <View style={styles.leftCol}>
+                      <View style={styles.row9}>
+                        <PositionBox currentPos={d.position} totalPlayers={d.positionOf} />
+                        <LapBox currentLap={d.lap} totalLap={d.lapOf} />
+                      </View>
+
+                      <TyreBox
+                        flTemp={d.tyreTemps.FL}
+                        frTemp={d.tyreTemps.FR}
+                        rrTemp={d.tyreTemps.RR}
+                        rlTemp={d.tyreTemps.RL}
+                      />
+
+                      <FuelBox currentFuelPercent={d.fuel} />
+                    </View>
+
+                    {/* center column — gear over speed */}
+                    <View style={styles.centerCol}>
+                      <GearSpeedBox currentSpeed={d.speed} currentGear={d.gear} />
+
+                      <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
+                    </View>
+
+                    {/* right column — pedal inputs */}
+                    <InputsBox throttle={d.throttle} brake={d.brake} angle={d.steeringWheelAngle || 0} />
                   </View>
+                </>
+              ) : null}
 
-                  <TyreBox
-                    flTemp={d.tyreTemps.FL}
-                    frTemp={d.tyreTemps.FR}
-                    rrTemp={d.tyreTemps.RR}
-                    rlTemp={d.tyreTemps.RL}
-                  />
-
-                  <FuelBox currentFuelPercent={d.fuel} />
-                </View>
-
-                {/* center column — gear over speed */}
-                <View style={styles.centerCol}>
-                  <GearSpeedBox currentSpeed={d.speed} currentGear={d.gear} />
-
-                  <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
-                </View>
-
-                {/* right column — pedal inputs */}
-                <InputsBox throttle={d.throttle} brake={d.brake} angle={d.steeringWheelAngle || 0} />
-              </View>
-
-              {directorMessage && !dismissed ? (
+              {shows(1) && directorMessage && !dismissed ? (
                 <DirectorPopup
                   message={directorMessage}
                   lap={d.lap}
@@ -250,20 +275,24 @@ export default function TelemetryDashboardScreen() {
 
             {/* Swipe-right page — Map, with the leaderboard in a server session. */}
             <View style={[styles.root, styles.mapPage, pad]}>
-              <View style={styles.mapHalf}>
-                <MapBox
-                  carPosition={d.carPosition}
-                  carHeading={carHeading}
-                  trackMap={trackMap}
-                  track={(token ? serverTrack : null) ?? track}
-                  onReset={resetSession}
-                />
-              </View>
-              <View style={styles.mapHalf}>
-                <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
-                {token ? <LeaderboardBox /> : <SectorBox sectors={sectorTimes} currentLapMs={d.currentLapMs} />}
-                <GapBox gapMs={d.lapDeltaMs} />
-              </View>
+              {shows(2) ? (
+                <>
+                  <View style={styles.mapHalf}>
+                    <MapBox
+                      carPosition={d.carPosition}
+                      carHeading={carHeading}
+                      trackMap={trackMap}
+                      track={(token ? serverTrack : null) ?? track}
+                      onReset={resetSession}
+                    />
+                  </View>
+                  <View style={styles.mapHalf}>
+                    <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
+                    {token ? <LeaderboardBox /> : <SectorBox sectors={sectorTimes} currentLapMs={d.currentLapMs} />}
+                    <GapBox gapMs={d.lapDeltaMs} />
+                  </View>
+                </>
+              ) : null}
             </View>
           </Animated.View>
         </View>
