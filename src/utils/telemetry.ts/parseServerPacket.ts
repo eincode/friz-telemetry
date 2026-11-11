@@ -3,11 +3,26 @@
 import { ServerDriverPacket } from "@/constants/telemetry";
 import { Buffer } from "buffer";
 
+/** Decimal places floats are rounded to before sending. */
+const FLOAT_DECIMALS = 3;
+const FLOAT_SCALE = 10 ** FLOAT_DECIMALS;
+
+/**
+ * A float32 read rounded to FLOAT_DECIMALS (millimetres for positions).
+ * Unrounded, JSON spells each float32 out to ~17 digits
+ * ("123.45600128173828"), which made every packet ~2 KB; on a weak
+ * connection that much upload backs up behind the WebSocket and the server
+ * falls seconds behind.
+ */
+function readFloat(buf: Buffer, offset: number): number {
+  return Math.round(buf.readFloatLE(offset) * FLOAT_SCALE) / FLOAT_SCALE;
+}
+
 function readVec3(buf: Buffer, offset: number): [number, number, number] {
   return [
-    buf.readFloatLE(offset),
-    buf.readFloatLE(offset + 4),
-    buf.readFloatLE(offset + 8),
+    readFloat(buf, offset),
+    readFloat(buf, offset + 4),
+    readFloat(buf, offset + 8),
   ];
 }
 
@@ -16,10 +31,10 @@ function readFloat4(
   offset: number,
 ): [number, number, number, number] {
   return [
-    buf.readFloatLE(offset),
-    buf.readFloatLE(offset + 4),
-    buf.readFloatLE(offset + 8),
-    buf.readFloatLE(offset + 12),
+    readFloat(buf, offset),
+    readFloat(buf, offset + 4),
+    readFloat(buf, offset + 8),
+    readFloat(buf, offset + 12),
   ];
 }
 
@@ -47,18 +62,18 @@ export function parseServerPacket(buf: Buffer): ServerDriverPacket {
     position: readVec3(buf, 0x04),
     worldVelocity: readVec3(buf, 0x10),
     rotation: readVec3(buf, 0x1c),
-    orientationRelativeToNorth: buf.readFloatLE(0x28),
+    orientationRelativeToNorth: readFloat(buf, 0x28),
     angularVelocity: readVec3(buf, 0x2c),
-    bodyHeight: buf.readFloatLE(0x38),
-    EngineRPM: buf.readFloatLE(0x3c),
+    bodyHeight: readFloat(buf, 0x38),
+    EngineRPM: readFloat(buf, 0x3c),
     iv,
-    fuelLevel: buf.readFloatLE(0x44),
-    fuelCapacity: buf.readFloatLE(0x48),
-    speed: buf.readFloatLE(0x4c),
-    boost: buf.readFloatLE(0x50),
-    oilPressure: buf.readFloatLE(0x54),
-    waterTemp: buf.readFloatLE(0x58),
-    oilTemp: buf.readFloatLE(0x5c),
+    fuelLevel: readFloat(buf, 0x44),
+    fuelCapacity: readFloat(buf, 0x48),
+    speed: readFloat(buf, 0x4c),
+    boost: readFloat(buf, 0x50),
+    oilPressure: readFloat(buf, 0x54),
+    waterTemp: readFloat(buf, 0x58),
+    oilTemp: readFloat(buf, 0x5c),
     tyreTemp: readFloat4(buf, 0x60),
     packetId: buf.readInt32LE(0x70),
     lapCount: buf.readInt16LE(0x74),
@@ -76,34 +91,34 @@ export function parseServerPacket(buf: Buffer): ServerDriverPacket {
     throttle: buf.readUInt8(0x91), // raw 0-255, not percent
     brake: buf.readUInt8(0x92), // raw 0-255, not percent
     roadPlane: readVec3(buf, 0x94),
-    roadPlaneDistance: buf.readFloatLE(0xa0),
+    roadPlaneDistance: readFloat(buf, 0xa0),
     wheelRPS: readFloat4(buf, 0xa4),
     tyreRadius: readFloat4(buf, 0xb4),
     suspHeight: readFloat4(buf, 0xc4),
-    clutch: buf.readFloatLE(0xf4),
-    clutchEngagement: buf.readFloatLE(0xf8),
-    RPMFromClutchToGearbox: buf.readFloatLE(0xfc),
-    transmissionTopSpeed: buf.readFloatLE(0x100),
+    clutch: readFloat(buf, 0xf4),
+    clutchEngagement: readFloat(buf, 0xf8),
+    RPMFromClutchToGearbox: readFloat(buf, 0xfc),
+    transmissionTopSpeed: readFloat(buf, 0x100),
     gearRatios: [
-      buf.readFloatLE(0x104),
-      buf.readFloatLE(0x108),
-      buf.readFloatLE(0x10c),
-      buf.readFloatLE(0x110),
-      buf.readFloatLE(0x114),
-      buf.readFloatLE(0x118),
-      buf.readFloatLE(0x11c),
-      buf.readFloatLE(0x120),
+      readFloat(buf, 0x104),
+      readFloat(buf, 0x108),
+      readFloat(buf, 0x10c),
+      readFloat(buf, 0x110),
+      readFloat(buf, 0x114),
+      readFloat(buf, 0x118),
+      readFloat(buf, 0x11c),
+      readFloat(buf, 0x120),
     ],
     carCode: buf.readInt32LE(0x124),
   };
 
   // PacketB+ tail (>= 316 bytes)
   if (buf.length >= 0x138 + 4) {
-    packet.wheelRotation = buf.readFloatLE(0x128);
-    packet.steeringAngularVelocity = buf.readFloatLE(0x12c);
-    packet.sway = buf.readFloatLE(0x130);
-    packet.heave = buf.readFloatLE(0x134);
-    packet.surge = buf.readFloatLE(0x138);
+    packet.wheelRotation = readFloat(buf, 0x128);
+    packet.steeringAngularVelocity = readFloat(buf, 0x12c);
+    packet.sway = readFloat(buf, 0x130);
+    packet.heave = readFloat(buf, 0x134);
+    packet.surge = readFloat(buf, 0x138);
   }
 
   // PacketTilda+ tail (>= 344 bytes)
@@ -111,7 +126,7 @@ export function parseServerPacket(buf: Buffer): ServerDriverPacket {
     packet.throttleFiltered = buf.readUInt8(0x13c);
     packet.brakeFiltered = buf.readUInt8(0x13d);
     packet.torqueVectors = readFloat4(buf, 0x140);
-    packet.energyRecovery = buf.readFloatLE(0x150);
+    packet.energyRecovery = readFloat(buf, 0x150);
   }
 
   // PacketC-only tail (368 bytes)
@@ -119,10 +134,10 @@ export function parseServerPacket(buf: Buffer): ServerDriverPacket {
     packet.surfaceType = readAscii(buf, 0x158, 4);
     packet.currentLap = buf.readInt32LE(0x15c);
     packet.wheelSteeringAngle = [
-      buf.readFloatLE(0x160),
-      buf.readFloatLE(0x164),
+      readFloat(buf, 0x160),
+      readFloat(buf, 0x164),
     ];
-    packet.wheelBase = buf.readFloatLE(0x168);
+    packet.wheelBase = readFloat(buf, 0x168);
     packet.carCategory = readAscii(buf, 0x16c, 4);
   }
 
