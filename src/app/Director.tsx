@@ -16,7 +16,7 @@ import { useOverlayStore } from "@/store/overlayStore";
 import { useServerStore } from "@/store/serverStore";
 import { wsUrl } from "@/utils/serverUrl";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { AppState, StyleSheet, View, ViewStyle } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -31,9 +31,6 @@ export default function DirectorScreen() {
   const serverUrl = useServerStore((s) => s.serverUrl);
   const connectOverlay = useOverlayStore((s) => s.connect);
   const disconnectOverlay = useOverlayStore((s) => s.disconnect);
-
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [camera, setCamera] = useState<CameraView | null>(null);
 
   useEffect(() => {
     if (!serverUrl) return;
@@ -54,16 +51,13 @@ export default function DirectorScreen() {
   const command = useDirectorCommand();
   const send = (key: string) => command.mutate({ key });
 
-  const onSelectDriver = (id: number, rank: number) => {
+  // Nothing is shown as current, camera or focus: both change in the game
+  // too, so a remembered one would drift. Every tap just sends its key.
+  const onFocus = (rank: number) => {
     const key = focusKey(rank);
-    if (!key) return;
-    setSelectedId(id);
-    send(key);
+    if (key) send(key);
   };
-  const onSelectCamera = (view: CameraView) => {
-    setCamera(view);
-    send(CAMERA_KEY[view]);
-  };
+  const onSelectCamera = (view: CameraView) => send(CAMERA_KEY[view]);
   const onReplayAction = (action: ReplayAction) => send(REPLAY_KEY[action]);
 
   const insets = useSafeAreaInsets();
@@ -90,10 +84,10 @@ export default function DirectorScreen() {
 
       <View style={styles.body}>
         <View style={styles.half}>
-          <DirectorStandings selectedId={selectedId} onSelect={onSelectDriver} />
+          <DirectorStandings onFocus={onFocus} />
         </View>
         <View style={styles.half}>
-          <CameraControl active={camera} onSelect={onSelectCamera} />
+          <CameraControl onSelect={onSelectCamera} />
           <ReplayControl onAction={onReplayAction} />
         </View>
       </View>

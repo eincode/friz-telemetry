@@ -37,23 +37,19 @@ const REPLAY_SKIPS: { id: ReplayAction; label: string }[] = [
 function ControlButton({
   label,
   hue,
-  active = false,
   onPress,
 }: {
   label: string;
   hue: keyof typeof HUE;
-  active?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityState={{ selected: active }}
       style={({ pressed }) => [
         styles.button,
-        { borderColor: active ? HUE[hue].label : HUE[hue].border },
-        active && styles.buttonActive,
+        { borderColor: HUE[hue].border },
         pressed && styles.buttonPressed,
       ]}
     >
@@ -61,7 +57,7 @@ function ControlButton({
         type="display"
         numberOfLines={1}
         adjustsFontSizeToFit
-        style={[styles.buttonLabel, active && { color: HUE[hue].label }]}
+        style={styles.buttonLabel}
       >
         {label}
       </ThemedText>
@@ -69,20 +65,13 @@ function ControlButton({
   );
 }
 
-export function CameraControl({
-  active,
-  onSelect,
-}: {
-  active: CameraView | null;
-  onSelect: (camera: CameraView) => void;
-}) {
+export function CameraControl({ onSelect }: { onSelect: (camera: CameraView) => void }) {
   return (
     <Box hue="times" label="CAMERA CONTROL" style={styles.box}>
       <View style={styles.row}>
         <ControlButton
           label="REPLAY CAMERA"
           hue="times"
-          active={active === "replay"}
           onPress={() => onSelect("replay")}
         />
       </View>
@@ -92,7 +81,6 @@ export function CameraControl({
             key={c.id}
             label={c.label}
             hue="times"
-            active={active === c.id}
             onPress={() => onSelect(c.id)}
           />
         ))}
@@ -129,7 +117,6 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: "#0A0C0F",
   },
-  buttonActive: { backgroundColor: "#121820" },
   buttonPressed: { opacity: 0.7 },
   buttonLabel: {
     fontFamily: "SairaCondensed-Bold",
