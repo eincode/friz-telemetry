@@ -15,7 +15,14 @@ declare module "react-native-udp" {
       event: "message",
       listener: (
         msg: Buffer,
-        rinfo: { address: string; port: number; family: string; size: number },
+        rinfo: {
+          address: string;
+          port: number;
+          family: string;
+          size: number;
+          /** When the native side received the packet, ms since the epoch. */
+          ts?: number;
+        },
       ) => void,
     ): this;
     on(event: "error", listener: (err: Error) => void): this;

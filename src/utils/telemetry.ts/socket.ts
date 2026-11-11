@@ -27,6 +27,30 @@ const BROADCAST_ADDR = "255.255.255.255";
 // wrong (dying) socket.
 const PORT_RELEASE_DELAY_MS = 150;
 
+/**
+ * Packets that reach JS later than this after the OS received them are
+ * dropped unprocessed. If the JS thread falls behind (slow phone, heavy
+ * screen), packets wait in a queue; processing old ones only shows old data
+ * and keeps the queue from ever draining, so the lag grows without bound.
+ * Skipping them lets it catch up to the live stream right away.
+ */
+const STALE_PACKET_MS = 100;
+
+let droppedStale = 0;
+let lastDropLogAt = 0;
+
+/** True when a packet waited too long to be worth processing. */
+function isStale(receivedAt: number | undefined): boolean {
+  if (!receivedAt) return false;
+  if (Date.now() - receivedAt <= STALE_PACKET_MS) return false;
+  droppedStale++;
+  if (__DEV__ && Date.now() - lastDropLogAt > 2000) {
+    lastDropLogAt = Date.now();
+    console.warn(`GT7: JS thread behind, dropped ${droppedStale} stale packets so far`);
+  }
+  return true;
+}
+
 export interface GT7Connection {
   start: () => void;
   getLockedIp: () => string | null;
@@ -98,8 +122,8 @@ export function startGT7Discovery(
       onError?.(err);
     });
 
-    sock.on("message", (msg: Uint8Array) => {
-      if (closed) return;
+    sock.on("message", (msg: Uint8Array, rinfo) => {
+      if (closed || isStale(rinfo.ts)) return;
       handleIncomingPacket(msg, onTelemetry, onRawTelemetry, onError);
     });
 
