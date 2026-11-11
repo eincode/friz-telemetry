@@ -12,6 +12,7 @@ import { RpmBar } from "@/components/pages/race-dashboard/rpm-bar";
 import { SectorBox } from "@/components/pages/race-dashboard/sector-box";
 import { TimesBox } from "@/components/pages/race-dashboard/times-box";
 import { TyreBox } from "@/components/pages/race-dashboard/tyre-box";
+import { ScaledStage } from "@/components/ui/scaled-stage";
 import { Colors } from "@/constants/theme";
 import { useTelemetryMapped } from "@/hooks/use-telemetry-mapped";
 import { useConsoleConnectionStore } from "@/store/consoleConnectionStore";
@@ -215,54 +216,59 @@ export default function TelemetryDashboardScreen() {
           <Animated.View style={[styles.pager, pagerStyle]}>
             {/* Swipe-left page — Manager */}
             <View style={[styles.root, pad]}>
-              {shows(0) ? (
-                <ManagerScreen
-                  throttle={d.throttle}
-                  brake={d.brake}
-                  tyreTemps={d.tyreTemps}
-                  fuel={d.fuel}
-                  lastLapMs={d.lastLapMs}
-                  bestLapMs={d.bestLapMs}
-                />
-              ) : null}
+              <ScaledStage>
+                {shows(0) ? (
+                  <ManagerScreen
+                    throttle={d.throttle}
+                    brake={d.brake}
+                    tyreTemps={d.tyreTemps}
+                    fuel={d.fuel}
+                    lastLapMs={d.lastLapMs}
+                    bestLapMs={d.bestLapMs}
+                  />
+                ) : null}
+              </ScaledStage>
             </View>
 
             <View style={[styles.root, pad]}>
-              {shows(1) ? (
-                <>
-                  <RpmBar rpm={d.rpm} minAlertRpm={d.minAlertRpm} maxAlertRpm={d.maxAlertRpm} />
+              <ScaledStage style={styles.stage}>
+                {shows(1) ? (
+                  <>
+                    <RpmBar rpm={d.rpm} minAlertRpm={d.minAlertRpm} maxAlertRpm={d.maxAlertRpm} />
 
-                  <View style={styles.grid}>
-                    {/* left column */}
-                    <View style={styles.leftCol}>
-                      <View style={styles.row9}>
-                        <PositionBox currentPos={d.position} totalPlayers={d.positionOf} />
-                        <LapBox currentLap={d.lap} totalLap={d.lapOf} />
+                    <View style={styles.grid}>
+                      {/* left column */}
+                      <View style={styles.leftCol}>
+                        <View style={styles.row9}>
+                          <PositionBox currentPos={d.position} totalPlayers={d.positionOf} />
+                          <LapBox currentLap={d.lap} totalLap={d.lapOf} />
+                        </View>
+
+                        <TyreBox
+                          flTemp={d.tyreTemps.FL}
+                          frTemp={d.tyreTemps.FR}
+                          rrTemp={d.tyreTemps.RR}
+                          rlTemp={d.tyreTemps.RL}
+                        />
+
+                        <FuelBox currentFuelPercent={d.fuel} />
                       </View>
 
-                      <TyreBox
-                        flTemp={d.tyreTemps.FL}
-                        frTemp={d.tyreTemps.FR}
-                        rrTemp={d.tyreTemps.RR}
-                        rlTemp={d.tyreTemps.RL}
-                      />
+                      {/* center column — gear over speed */}
+                      <View style={styles.centerCol}>
+                        <GearSpeedBox currentSpeed={d.speed} currentGear={d.gear} />
 
-                      <FuelBox currentFuelPercent={d.fuel} />
+                        <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
+                      </View>
+
+                      {/* right column — pedal inputs */}
+                      <InputsBox throttle={d.throttle} brake={d.brake} angle={d.steeringWheelAngle || 0} />
                     </View>
+                  </>
+                ) : null}
+              </ScaledStage>
 
-                    {/* center column — gear over speed */}
-                    <View style={styles.centerCol}>
-                      <GearSpeedBox currentSpeed={d.speed} currentGear={d.gear} />
-
-                      <TimesBox currentLapMs={d.currentLapMs} lastLapMs={d.lastLapMs} bestLapMs={d.bestLapMs} />
-                    </View>
-
-                    {/* right column — pedal inputs */}
-                    <InputsBox throttle={d.throttle} brake={d.brake} angle={d.steeringWheelAngle || 0} />
-                  </View>
-                </>
-              ) : null}
-
+              {/* Outside the stage so its scrim still covers the page padding. */}
               {shows(1) && directorMessage && !dismissed ? (
                 <DirectorPopup
                   message={directorMessage}
@@ -311,6 +317,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     gap: 9,
   },
+  stage: { gap: 9 },
   mapPage: { minHeight: 0, flexDirection: "row" },
   mapHalf: { flex: 1, minWidth: 0, gap: 9 },
 

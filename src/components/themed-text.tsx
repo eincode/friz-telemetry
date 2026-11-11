@@ -23,7 +23,10 @@ export function ThemedText({
       // Placed before `rest` so a caller can still opt back in explicitly.
       allowFontScaling={false}
       style={[
-        { color: theme[themeColor ?? "white"] },
+        // Android pads every line with the font's full ascent/descent; iOS
+        // doesn't. Saira's are tall (1.57 em), so the readouts — tuned on iOS
+        // with tight negative margins — came out taller than their boxes.
+        { color: theme[themeColor ?? "white"], includeFontPadding: false },
         type === "default" && styles.default,
         type === "heading" && styles.heading,
         type === "label" && styles.label,
