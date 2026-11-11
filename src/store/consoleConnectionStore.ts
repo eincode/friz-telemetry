@@ -45,6 +45,38 @@ interface ConsoleConnectionState {
 
 const FIRST_PACKET_TIMEOUT_MS = 8000;
 
+/**
+ * Fast-changing values reach React once per display frame, with the newest
+ * packet's values. GT7 sends ~60 packets/s, so on a 60 Hz screen that is
+ * every packet; but when the phone falls behind and several packets arrive
+ * within one frame, the whole dashboard re-renders once for all of them
+ * instead of once per packet, which would only push it further behind.
+ * Packets are still processed (and forwarded) one by one.
+ */
+type LiveFields = Partial<Pick<ConsoleConnectionState, "telemetry" | "carHeading" | "lapDeltaMs">>;
+let pendingLive: LiveFields | null = null;
+let frameHandle: number | null = null;
+
+function flushLive() {
+  frameHandle = null;
+  if (!pendingLive) return;
+  const patch = pendingLive;
+  pendingLive = null;
+  useConsoleConnectionStore.setState(patch);
+}
+
+/** Queues per-packet values for the UI; published on the next frame. */
+function publishLive(patch: LiveFields) {
+  pendingLive = pendingLive ? Object.assign(pendingLive, patch) : patch;
+  frameHandle ??= requestAnimationFrame(flushLive);
+}
+
+function cancelLive() {
+  if (frameHandle !== null) cancelAnimationFrame(frameHandle);
+  frameHandle = null;
+  pendingLive = null;
+}
+
 type RawTelemetryListener = (raw: Buffer) => void;
 const rawListeners = new Set<RawTelemetryListener>();
 
@@ -91,16 +123,17 @@ function feedSession(data: GT7Telemetry) {
   const map = trackMap.feed(data);
   const found = trackDetector.feed(data);
   const fresh = get().sessionId === session;
-  set({
-    telemetry: data,
-    carHeading: heading.feed(data),
-    lapDeltaMs: lapDelta.feed(data),
-    ...(fresh && map && { trackMap: map }),
-    ...(fresh && found !== undefined && { track: found }),
-    // A snapshot is complete only once, when the lap closes: the full-lap
-    // match confirms or corrects the mid-lap one.
-    ...(fresh && map?.complete && { track: trackDetector.confirm(map.points) }),
-  });
+  publishLive({ telemetry: data, carHeading: heading.feed(data), lapDeltaMs: lapDelta.feed(data) });
+  // Map and track changes are rare, so they go out right away.
+  if (fresh && (map || found !== undefined)) {
+    set({
+      ...(map && { trackMap: map }),
+      ...(found !== undefined && { track: found }),
+      // A snapshot is complete only once, when the lap closes: the full-lap
+      // match confirms or corrects the mid-lap one.
+      ...(map?.complete && { track: trackDetector.confirm(map.points) }),
+    });
+  }
   // After the track is settled for this packet, so gates match the track shown.
   const sectors = sectorTimer.feed(data, get().track);
   if (sectors) set({ sectorTimes: sectors });
@@ -132,7 +165,7 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
             // fed while in the menu; positions there are meaningless.
             if (!inMenu) get().resetSession();
             inMenu = true;
-            set({ telemetry: data });
+            publishLive({ telemetry: data });
           } else {
             inMenu = false;
             feedSession(data);
@@ -177,6 +210,8 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
       }
       conn?.close();
       conn = null;
+      // A queued UI update would otherwise land after the reset below.
+      cancelLive();
       lapDelta.reset();
       trackMap.reset();
       trackDetector.reset();
@@ -200,6 +235,8 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
       trackMap.reset();
       trackDetector.reset();
       sectorTimer.reset();
+      // Don't let a queued pre-reset delta overwrite the cleared one.
+      if (pendingLive && "lapDeltaMs" in pendingLive) pendingLive.lapDeltaMs = null;
       set((s) => ({
         lapDeltaMs: null,
         trackMap: EMPTY_TRACK_MAP,
