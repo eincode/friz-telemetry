@@ -118,7 +118,6 @@ export default function TelemetryDashboardScreen() {
 
   const d = useTelemetryMapped();
   const trackMap = useConsoleConnectionStore((s) => s.trackMap);
-  const sessionId = useConsoleConnectionStore((s) => s.sessionId);
   const resetSession = useConsoleConnectionStore((s) => s.resetSession);
   const carHeading = useConsoleConnectionStore((s) => s.carHeading);
   const track = useConsoleConnectionStore((s) => s.track);
@@ -197,14 +196,11 @@ export default function TelemetryDashboardScreen() {
           <Animated.View style={[styles.pager, pagerStyle]}>
             {/* Swipe-left page — Manager */}
             <View style={[styles.root, pad]}>
-              {/* Remounts on a track change so fuel-per-lap history starts over. */}
               <ManagerScreen
-                key={sessionId}
                 throttle={d.throttle}
                 brake={d.brake}
                 tyreTemps={d.tyreTemps}
                 fuel={d.fuel}
-                lap={d.lap}
                 lastLapMs={d.lastLapMs}
                 bestLapMs={d.bestLapMs}
               />

@@ -1,48 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { Box } from "@/components/pages/race-dashboard/box";
-import {
-  InputSample,
-  InputTrace,
-  PEDAL_TRACE,
-} from "@/components/pages/race-dashboard/input-trace";
+import { InputTrace, PEDAL_TRACE } from "@/components/pages/race-dashboard/input-trace";
 import { VerticalInputBar } from "@/components/pages/race-dashboard/vertical-input-bar";
 import { ThemedText } from "@/components/themed-text";
 import { Colors } from "@/constants/theme";
-
-const SAMPLE_MS = 50;
-/** 200 samples at 50 ms — a rolling 10 s window. */
-const TRACE_SAMPLES = 200;
-
-/**
- * Samples the pedals on a fixed clock instead of on every telemetry frame, so
- * the trace keeps advancing on a real time axis while an input sits still.
- */
-function useInputHistory(throttle: number, brake: number) {
-  const latest = useRef<InputSample>({ throttle, brake });
-  useEffect(() => {
-    latest.current = { throttle, brake };
-  }, [throttle, brake]);
-
-  const [history, setHistory] = useState<InputSample[]>([]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setHistory((prev) => {
-        const next =
-          prev.length >= TRACE_SAMPLES
-            ? prev.slice(prev.length - TRACE_SAMPLES + 1)
-            : prev.slice();
-        next.push(latest.current);
-        return next;
-      });
-    }, SAMPLE_MS);
-    return () => clearInterval(id);
-  }, []);
-
-  return history;
-}
+import { INPUT_TRACE_SAMPLES, inputHistory } from "@/utils/telemetry.ts/inputHistory";
 
 function LegendDot({ color, label }: { color: string; label: string }) {
   return (
@@ -62,7 +26,9 @@ export function InputPanel({
   throttle: number;
   brake: number;
 }) {
-  const history = useInputHistory(throttle, brake);
+  // Recorded from every packet by the connection store, so the trace is
+  // already full when this page is swiped back into view.
+  const history = useSyncExternalStore(inputHistory.subscribe, inputHistory.getSnapshot);
 
   return (
     <Box
@@ -77,7 +43,7 @@ export function InputPanel({
       }
     >
       <View style={styles.row}>
-        <InputTrace history={history} capacity={TRACE_SAMPLES} />
+        <InputTrace history={history} capacity={INPUT_TRACE_SAMPLES} />
 
         <View style={styles.bars}>
           <VerticalInputBar

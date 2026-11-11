@@ -10,7 +10,6 @@ export function ManagerScreen({
   brake,
   tyreTemps,
   fuel,
-  lap,
   lastLapMs,
   bestLapMs,
 }: {
@@ -18,7 +17,6 @@ export function ManagerScreen({
   brake: number;
   tyreTemps: Record<TyreCorner, number>;
   fuel: number;
-  lap: number;
   lastLapMs: number | null;
   bestLapMs: number | null;
 }) {
@@ -39,7 +37,6 @@ export function ManagerScreen({
 
         <FuelManagementBox
           fuel={fuel}
-          lap={lap}
           lastLapMs={lastLapMs}
           bestLapMs={bestLapMs}
         />

@@ -1,75 +1,16 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { Box } from "@/components/pages/race-dashboard/box";
 import { ThemedText } from "@/components/themed-text";
 import { Colors } from "@/constants/theme";
+import { useConsoleConnectionStore } from "@/store/consoleConnectionStore";
 
-/** How often the projections are recomputed. */
-const TICK_MS = 10_000;
-/** Rolling window for the live burn rate — 12 ticks is two minutes. */
-const WINDOW_SAMPLES = 12;
-/** How many recent laps the per-lap average is taken over. */
-const ROLLING_LAPS = 5;
 /** Below this many laps of fuel left, the projections turn red. */
 const CRITICAL_LAPS = 2;
-/** Fuel rising by more than this between samples means the car was refuelled. */
-const REFUEL_EPSILON = 0.05;
 
 const EMPTY = "--";
-
-interface FuelSample {
-  t: number;
-  fuel: number;
-}
-
-/**
- * Burn rate in % per millisecond, measured over a rolling wall-clock window.
- *
- * Sampling on a 10 s clock rather than at lap boundaries means there is a usable
- * rate a few seconds into the first lap, and it keeps the readouts from
- * flickering at telemetry rate — they step once per tick.
- */
-function useBurnRate(fuel: number) {
-  const latest = useRef(fuel);
-  useEffect(() => {
-    latest.current = fuel;
-  }, [fuel]);
-
-  // Seeded at mount so the first tick already has something to measure against.
-  const [samples, setSamples] = useState<FuelSample[]>(() => [
-    { t: Date.now(), fuel },
-  ]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setSamples((prev) => {
-        const next = { t: Date.now(), fuel: latest.current };
-        const last = prev[prev.length - 1];
-        // A refuel invalidates every sample before it.
-        const base = last && next.fuel > last.fuel + REFUEL_EPSILON ? [] : prev;
-        return [...base, next].slice(-WINDOW_SAMPLES);
-      });
-    }, TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-
-  const first = samples[0];
-  const last = samples[samples.length - 1];
-  const elapsed = samples.length >= 2 ? last.t - first.t : 0;
-  const burnt = samples.length >= 2 ? first.fuel - last.fuel : 0;
-
-  return {
-    /** % per ms, or null while the car is stationary or the window is short. */
-    ratePerMs: elapsed > 0 && burnt > 0 ? burnt / elapsed : null,
-    // `samples` is seeded at mount and never emptied, so `last` always exists.
-    /** Tank level as of the last tick — projections step with it. */
-    sampledFuel: last.fuel,
-    /** When that level was read — the anchor the countdown runs down from. */
-    sampledAt: last.t,
-  };
-}
 
 /**
  * Re-renders once a second so the countdown keeps moving between recalculations
@@ -83,52 +24,6 @@ function useSecondsTick() {
     return () => clearInterval(id);
   }, []);
   return now;
-}
-
-/**
- * Fuel burnt per completed lap, averaged over the last few laps. More accurate
- * than the live rate because it covers exactly one lap's mix of corners and
- * straights, so it wins whenever a lap has actually been logged.
- */
-function useFuelPerLap(fuel: number, lap: number) {
-  const [prevLap, setPrevLap] = useState(lap);
-  const [lapStartFuel, setLapStartFuel] = useState(fuel);
-  const [usage, setUsage] = useState<number[]>([]);
-  // Only laps seen start-to-finish count: the lap in progress at mount is
-  // already part-run, and the 0 -> 1 change is the race starting, not a lap.
-  const [armed, setArmed] = useState(false);
-
-  // Adjusting state during render: the lap boundary is derived from the
-  // incoming telemetry, so this settles before the frame is committed.
-  if (lap !== prevLap) {
-    const used = lapStartFuel - fuel;
-    setPrevLap(lap);
-    setLapStartFuel(fuel);
-
-    if (lap < prevLap) {
-      // Counter went backwards — new session, so the old rate is meaningless.
-      setUsage([]);
-      setArmed(false);
-    } else if (prevLap === 0) {
-      // Lights out. 0 -> 1 starts lap 1, it doesn't complete a lap: whatever
-      // was burnt sitting on the grid says nothing about racing consumption.
-      // Lap 1 is run in full from here, so it becomes the first measurement.
-      setArmed(true);
-    } else if (!armed) {
-      // Joined mid-lap, so this boundary is the first whole lap's start.
-      setArmed(true);
-    } else if (used > 0) {
-      // A negative delta means the car was refuelled; that lap tells us nothing.
-      setUsage((prev) => [...prev, used].slice(-ROLLING_LAPS));
-    }
-  }
-
-  const perLap =
-    usage.length > 0
-      ? usage.reduce((sum, u) => sum + u, 0) / usage.length
-      : null;
-
-  return { perLap, laps: usage.length };
 }
 
 /** H:MM:SS, dropping the hour when there isn't one. */
@@ -173,19 +68,23 @@ function StatCell({
 
 export function FuelManagementBox({
   fuel,
-  lap,
   lastLapMs,
   bestLapMs,
 }: {
   /** Tank level, 0–100. */
   fuel: number;
-  lap: number;
   lastLapMs: number | null;
   bestLapMs: number | null;
 }) {
-  const { perLap: lapAverage, laps } = useFuelPerLap(fuel, lap);
-  const { ratePerMs, sampledFuel, sampledAt } = useBurnRate(fuel);
+  // Measured from every packet by the connection store (see FuelTracker), so
+  // the figures keep building while this page is not rendered.
+  const stats = useConsoleConnectionStore((s) => s.fuelStats);
   const now = useSecondsTick();
+  const lapAverage = stats?.perLap ?? null;
+  const laps = stats?.laps ?? 0;
+  const ratePerMs = stats?.ratePerMs ?? null;
+  const sampledFuel = stats?.sampledFuel ?? fuel;
+  const sampledAt = stats?.sampledAt ?? now;
 
   // GT7 reports 0 for "no time set", so fall back to the best lap rather than
   // inventing a reference lap time.

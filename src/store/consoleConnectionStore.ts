@@ -1,5 +1,8 @@
 import { HeadingTracker } from "@/utils/telemetry.ts/heading";
 import { LapDeltaTracker } from "@/utils/telemetry.ts/lapDelta";
+import { FuelStats, FuelTracker } from "@/utils/telemetry.ts/fuelTracker";
+import { inputHistory } from "@/utils/telemetry.ts/inputHistory";
+import { fuelPercent } from "@/utils/telemetry.ts/mapToTelemetry";
 import { EMPTY_SECTOR_TIMES, SectorTimer, SectorTimes } from "@/utils/telemetry.ts/sectorTimer";
 import { TrackDetector } from "@/utils/telemetry.ts/trackDetector";
 import { TrackData } from "@/utils/telemetry.ts/trackMatch";
@@ -27,6 +30,8 @@ interface ConsoleConnectionState {
   track: TrackData | null;
   /** Live sector times against the known track's sector gates. */
   sectorTimes: SectorTimes;
+  /** Fuel burn rate and per-lap use; null until the first on-track packet. */
+  fuelStats: FuelStats | null;
   /**
    * Bumped whenever the driver moves to a different track. Stateful views key
    * on it so their per-session history (fuel per lap, input traces) starts over.
@@ -96,6 +101,7 @@ let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 const lapDelta = new LapDeltaTracker();
 const heading = new HeadingTracker();
 const sectorTimer = new SectorTimer();
+const fuelTracker = new FuelTracker();
 // Session boundaries: primarily GT7's menu packets (see isMenuPacket). As a
 // fallback, a track change is also inferred from the car's path: a different
 // known track matching, or the car far from the known track / traced outline.
@@ -137,6 +143,12 @@ function feedSession(data: GT7Telemetry) {
   // After the track is settled for this packet, so gates match the track shown.
   const sectors = sectorTimer.feed(data, get().track);
   if (sectors) set({ sectorTimes: sectors });
+  // Recorded here rather than in the components showing them, so they keep
+  // building while those pages are not rendered.
+  const now = Date.now();
+  inputHistory.feed(Math.round(data.throttle), Math.round(data.brake), now);
+  const fuelStats = fuelTracker.feed(fuelPercent(data), Math.max(0, data.lapCount), now);
+  if (fuelStats) set({ fuelStats });
 }
 
 export const useConsoleConnectionStore = create<ConsoleConnectionState>(
@@ -149,6 +161,7 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
     trackMap: EMPTY_TRACK_MAP,
     track: null,
     sectorTimes: EMPTY_SECTOR_TIMES,
+    fuelStats: null,
     sessionId: 0,
     carHeading: 0,
 
@@ -216,6 +229,8 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
       trackMap.reset();
       trackDetector.reset();
       sectorTimer.reset();
+      fuelTracker.reset();
+      inputHistory.reset();
       inMenu = false;
       set({
         status: "idle",
@@ -225,6 +240,7 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
         trackMap: EMPTY_TRACK_MAP,
         track: null,
         sectorTimes: EMPTY_SECTOR_TIMES,
+        fuelStats: null,
         sessionId: get().sessionId + 1,
         error: null,
       });
@@ -235,6 +251,8 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
       trackMap.reset();
       trackDetector.reset();
       sectorTimer.reset();
+      fuelTracker.reset();
+      inputHistory.reset();
       // Don't let a queued pre-reset delta overwrite the cleared one.
       if (pendingLive && "lapDeltaMs" in pendingLive) pendingLive.lapDeltaMs = null;
       set((s) => ({
@@ -242,6 +260,7 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
         trackMap: EMPTY_TRACK_MAP,
         track: null,
         sectorTimes: EMPTY_SECTOR_TIMES,
+        fuelStats: null,
         sessionId: s.sessionId + 1,
       }));
     },

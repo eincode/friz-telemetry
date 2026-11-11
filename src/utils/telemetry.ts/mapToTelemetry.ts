@@ -2,14 +2,19 @@
 import { Telemetry, TyreCorner } from "@/app/RaceDashboard";
 import { GT7Telemetry } from "./types";
 
+/**
+ * Tank level, 0–100. Kept fractional: per-lap consumption is only a few
+ * percent, so rounding here would swamp the fuel-management maths. Displays
+ * round it themselves.
+ */
+export const fuelPercent = (t: GT7Telemetry) => (t.fuelCapacity > 0 ? (t.fuelLevel / t.fuelCapacity) * 100 : 0);
+
 /** lapDeltaMs is stateful (needs lap history), so it is filled in by the caller. */
 export function mapToTelemetry(t: GT7Telemetry): Omit<Telemetry, "lapDeltaMs"> {
   // GT7 speed field is m/s — convert to km/h to match typical dashboard units.
   const speedKmh = Math.round(t.speed * 3.6);
 
-  // Kept fractional: per-lap consumption is only a few percent, so rounding
-  // here would swamp the fuel-management maths. Displays round it themselves.
-  const fuel = t.fuelCapacity > 0 ? (t.fuelLevel / t.fuelCapacity) * 100 : 0;
+  const fuel = fuelPercent(t);
 
   // -1 (0xFFFFFFFF as signed int32) is GT7's "no time set" sentinel.
   const bestLapMs = t.bestLapTimeMs >= 0 ? t.bestLapTimeMs : 0;
