@@ -27,7 +27,10 @@ const DEFAULT_TELEMETRY: Telemetry = {
 };
 
 export function useTelemetryMapped(): Telemetry {
-  const { telemetry, lapDeltaMs } = useConsoleConnectionStore((s) => s);
+  // Only these two fields: selecting the whole store would re-render on
+  // every unrelated update too.
+  const telemetry = useConsoleConnectionStore((s) => s.telemetry);
+  const lapDeltaMs = useConsoleConnectionStore((s) => s.lapDeltaMs);
 
   if (!telemetry) return DEFAULT_TELEMETRY;
   return { ...mapToTelemetry(telemetry), lapDeltaMs };

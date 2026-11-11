@@ -17,7 +17,11 @@ const queryClient = new QueryClient();
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { status, connect, disconnect } = useConsoleConnectionStore((s) => s);
+  // Field by field: this screen stays mounted under the dashboard, and a
+  // whole-store selector would re-render it on every telemetry update.
+  const status = useConsoleConnectionStore((s) => s.status);
+  const connect = useConsoleConnectionStore((s) => s.connect);
+  const disconnect = useConsoleConnectionStore((s) => s.disconnect);
   const pad: ViewStyle = {
     paddingLeft: Math.max(30, insets.left),
     paddingRight: Math.max(30, insets.right),

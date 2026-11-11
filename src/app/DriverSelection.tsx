@@ -20,7 +20,10 @@ const DASHBOARD_MS = 5000;
 
 export default function DriverSelectionScreen() {
   const insets = useSafeAreaInsets();
-  const { status, connect } = useConsoleConnectionStore((s) => s);
+  // Field by field: this screen stays mounted under the dashboard, and a
+  // whole-store selector would re-render it on every telemetry update.
+  const status = useConsoleConnectionStore((s) => s.status);
+  const connect = useConsoleConnectionStore((s) => s.connect);
   const router = useRouter();
   const pad: ViewStyle = {
     paddingLeft: Math.max(30, insets.left),

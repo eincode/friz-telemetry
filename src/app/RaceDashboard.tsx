@@ -72,7 +72,7 @@ export default function TelemetryDashboardScreen() {
   const { token, serverUrl } = useServerStore((s) => s);
   const connectOverlay = useOverlayStore((s) => s.connect);
   const disconnectOverlay = useOverlayStore((s) => s.disconnect);
-  const { disconnect } = useConsoleConnectionStore((s) => s);
+  const disconnect = useConsoleConnectionStore((s) => s.disconnect);
   const onBack = () => {
     disconnect();
     router.back();
