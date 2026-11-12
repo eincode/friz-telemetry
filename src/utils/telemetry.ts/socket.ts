@@ -14,7 +14,8 @@ import { GT7Telemetry } from "./types";
 import { detectVersion } from "./version";
 
 export type OnTelemetry = (data: GT7Telemetry) => void;
-export type OnRawTelemetry = (rawTelemetry: Buffer) => void;
+/** The original encrypted datagram, called only for packets that decrypted and parsed. */
+export type OnRawTelemetry = (encrypted: Uint8Array) => void;
 export type OnError = (err: Error) => void;
 export type OnDiscover = (ip: string) => void;
 
@@ -72,7 +73,7 @@ function handleIncomingPacket(
   try {
     const telemetry = parseTelemetry(plaintext);
     onTelemetry(telemetry);
-    onRawTelemetry(plaintext);
+    onRawTelemetry(msg);
   } catch (err) {
     onError?.(err instanceof Error ? err : new Error(String(err)));
   }

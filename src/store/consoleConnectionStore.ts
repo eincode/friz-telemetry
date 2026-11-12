@@ -9,7 +9,6 @@ import { TrackData } from "@/utils/telemetry.ts/trackMatch";
 import { EMPTY_TRACK_MAP, TrackMapRecorder, TrackMapSnapshot } from "@/utils/telemetry.ts/trackMap";
 import { GT7Connection, startGT7Discovery } from "@/utils/telemetry.ts/socket";
 import { GT7Telemetry } from "@/utils/telemetry.ts/types";
-import { Buffer } from "buffer";
 import { create } from "zustand";
 
 export type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
@@ -82,12 +81,13 @@ function cancelLive() {
   pendingLive = null;
 }
 
-type RawTelemetryListener = (raw: Buffer) => void;
+type RawTelemetryListener = (encrypted: Uint8Array) => void;
 const rawListeners = new Set<RawTelemetryListener>();
 
 /**
- * Every decrypted packet, at full rate and outside React state (the store
- * itself is throttled for the UI). Returns the unsubscribe function.
+ * Every valid packet as the original encrypted datagram from the console, at
+ * full rate and outside React state (the store itself is throttled for the
+ * UI). Returns the unsubscribe function.
  */
 export function subscribeRawTelemetry(listener: RawTelemetryListener): () => void {
   rawListeners.add(listener);
@@ -191,8 +191,8 @@ export const useConsoleConnectionStore = create<ConsoleConnectionState>(
             timeoutHandle = null;
           }
         },
-        (rawTelemetry) => {
-          rawListeners.forEach((listener) => listener(rawTelemetry));
+        (encrypted) => {
+          rawListeners.forEach((listener) => listener(encrypted));
         },
         (ip) => {
           set({ connectedIp: ip });

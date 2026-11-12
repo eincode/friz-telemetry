@@ -23,7 +23,7 @@ interface TelemetryServerConnectionState {
   connect: (url: string, authToken?: string) => void;
   disconnect: () => void;
   /** Internal: used by the telemetry bridge (step 2) to send if open. */
-  sendIfOpen: (data: string) => void;
+  sendIfOpen: (data: string | Uint8Array) => void;
 }
 
 /** No send for this long and the link counts as idle. */

@@ -38,7 +38,7 @@ interface OverlayStore {
   /** Track the session runs on; matches the ids in TRACKS. */
   trackId: string | null;
   mode: SessionMode | null;
-  /** Live car positions, up to ~25 Hz (every frame from a 20 Hz server). */
+  /** Live car positions, up to 20 Hz (every frame from a 20 Hz server). */
   cars: OverlayCar[];
   /**
    * Places and gaps, leader first, refreshed once a second so two drivers
@@ -69,13 +69,14 @@ interface StateMessage {
 }
 
 /**
- * State frames are published at most this often (~25 Hz), always the newest:
- * a frame arriving sooner waits, and is replaced by any newer one that comes
- * in meanwhile, unparsed. That keeps every frame from a 20 Hz server (50 ms
- * apart), thins out a faster one, and after a choppy patch, when delayed
- * frames arrive in a burst, shows the latest of them rather than the first.
+ * State frames are published at most this often (20 Hz, the server's broadcast
+ * rate), always the newest: a frame arriving sooner waits for the remainder,
+ * and is replaced by any newer one that comes in meanwhile, unparsed. A
+ * slightly early frame is delayed a few ms rather than dropped; a faster
+ * server is thinned out, and after a choppy patch, when delayed frames arrive
+ * in a burst, the latest of them is shown rather than the first.
  */
-const PUBLISH_INTERVAL_MS = 40;
+const PUBLISH_INTERVAL_MS = 50;
 /** Standings are republished at most this often, independent of positions. */
 const STANDINGS_INTERVAL_MS = 1000;
 /** JSON.stringify keeps key order, so every state frame starts like this. */

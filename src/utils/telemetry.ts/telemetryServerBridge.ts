@@ -1,7 +1,5 @@
 import { subscribeRawTelemetry } from "@/store/consoleConnectionStore";
 import { useTelemetryServerStore } from "@/store/telemetryServerStore";
-import { Buffer } from "buffer";
-import { parseServerPacket } from "./parseServerPacket";
 
 let unsubscribe: (() => void) | null = null;
 
@@ -22,8 +20,9 @@ let lastSentAt = 0;
  * MIN_SEND_GAP_MS, always the newest packet, without triggering component
  * re-renders — this module has no UI.
  *
- * Message schema is a placeholder (raw GT7Telemetry) until the real
- * server contract is decided.
+ * Each packet goes out as one binary frame holding the encrypted datagram
+ * exactly as the PS5 sent it (296–368 bytes); the server decrypts and parses
+ * it.
  */
 export function startTelemetryBridge() {
   if (unsubscribe) {
@@ -38,13 +37,11 @@ export function stopTelemetryBridge() {
   unsubscribe = null;
 }
 
-function forwardTelemetry(telemetry: Buffer) {
+function forwardTelemetry(encrypted: Uint8Array) {
   const now = Date.now();
   if (now - lastSentAt < MIN_SEND_GAP_MS) return;
   lastSentAt = now;
   // sendIfOpen no-ops (drops) if the WS isn't OPEN — no queueing, no retry,
   // per the "freshest data or nothing" decision.
-  useTelemetryServerStore
-    .getState()
-    .sendIfOpen(JSON.stringify(parseServerPacket(telemetry)));
+  useTelemetryServerStore.getState().sendIfOpen(encrypted);
 }
